@@ -1,0 +1,114 @@
+/* ===== 新拟态 Neumorphism — soft embossed UI ===== */
+[data-theme="neu"] {
+    --bg: #dfe5ec;
+    --surface: #dfe5ec;
+    --surface-2: #d3d9e0;
+    --border: transparent;
+    --text: #3d4756;
+    --muted: #8b93a3;
+    --accent: #6c7aef;
+    --accent-2: #8a94f5;
+    --safe: #2eaf6d;
+    --moderate: #d99a2b;
+    --danger: #e05563;
+    --radius: 16px;
+    --radius-lg: 22px;
+    --font: 'Segoe UI', system-ui, sans-serif;
+    --mono: 'Cascadia Code', 'Consolas', monospace;
+    --bar-bg: #cdd3da;
+    --shadow-lg: 12px 12px 30px rgba(150, 160, 175, 0.55), -12px -12px 30px rgba(255, 255, 255, 0.75);
+}
+
+/* soft raised card */
+[data-theme="neu"] .panel,
+[data-theme="neu"] .clean-group {
+    background: var(--surface);
+    box-shadow: 9px 9px 22px rgba(163, 174, 190, 0.55),
+                -9px -9px 22px rgba(255, 255, 255, 0.85);
+}
+
+[data-theme="neu"] .brand-name { color: var(--accent); }
+
+/* embossed buttons */
+[data-theme="neu"] .btn {
+    background: var(--surface);
+    border: 0;
+    border-radius: 14px;
+    box-shadow: 6px 6px 14px rgba(163, 174, 190, 0.6),
+                -6px -6px 14px rgba(255, 255, 255, 0.9);
+    color: var(--text);
+}
+[data-theme="neu"] .btn:hover:not(:disabled) { color: var(--accent); }
+[data-theme="neu"] .btn:active:not(:disabled) {
+    box-shadow: inset 6px 6px 12px rgba(163, 174, 190, 0.7),
+                inset -6px -6px 12px rgba(255, 255, 255, 0.85);
+}
+[data-theme="neu"] .btn-primary {
+    background: linear-gradient(145deg, #7b88f3, #5d6ae0);
+    color: #fff;
+    box-shadow: 6px 6px 14px rgba(120, 134, 210, 0.5),
+                -6px -6px 14px rgba(255, 255, 255, 0.85);
+}
+[data-theme="neu"] .btn-primary:active:not(:disabled) { box-shadow: inset 5px 5px 10px rgba(60, 70, 150, 0.5); }
+[data-theme="neu"] .btn-danger {
+    background: linear-gradient(145deg, #f0808c, #d84a58);
+    color: #fff;
+}
+[data-theme="neu"] .btn-danger:hover:not(:disabled) { background: linear-gradient(145deg, #f0808c, #d84a58); color: #fff; }
+[data-theme="neu"] .btn-ghost { background: transparent; box-shadow: none; }
+
+/* inset wells */
+[data-theme="neu"] .drive-bar,
+[data-theme="neu"] .view-tabs {
+    background: #d0d6de;
+    box-shadow: inset 4px 4px 10px rgba(163, 174, 190, 0.6),
+                inset -4px -4px 10px rgba(255, 255, 255, 0.85);
+}
+[data-theme="neu"] .drive-fill {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 8px rgba(108, 122, 239, 0.4);
+}
+
+/* rounded chips */
+[data-theme="neu"] .drive-tab {
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted);
+}
+[data-theme="neu"] .drive-tab.active {
+    background: var(--surface);
+    color: var(--accent);
+    box-shadow: 4px 4px 10px rgba(163, 174, 190, 0.6), -4px -4px 10px rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="neu"] .view-tab { border-radius: 10px; }
+[data-theme="neu"] .view-tab.active {
+    background: var(--surface);
+    color: var(--accent);
+    box-shadow: 4px 4px 10px rgba(163, 174, 190, 0.6), -4px -4px 10px rgba(255, 255, 255, 0.9);
+}
+
+/* soft hover */
+[data-theme="neu"] .dir-row:hover,
+[data-theme="neu"] .file-row:hover,
+[data-theme="neu"] .clean-item:hover {
+    background: rgba(255, 255, 255, 0.35);
+    box-shadow: inset 2px 2px 6px rgba(163, 174, 190, 0.3);
+}
+
+/* inset input row for checkbox wells */
+[data-theme="neu"] .clean-item input[type="checkbox"] { accent-color: var(--accent); }
+
+[data-theme="neu"] .crumb { color: var(--accent); }
+
+[data-theme="neu"] .modal {
+    background: var(--surface);
+    border: 0;
+    border-radius: 24px;
+    box-shadow: 14px 14px 34px rgba(150, 160, 175, 0.6), -14px -14px 34px rgba(255, 255, 255, 0.85);
+}
+
+[data-theme="neu"] .toast { border: 0; box-shadow: var(--shadow-lg); }
+
+[data-theme="neu"] ::-webkit-scrollbar-thumb { background: #c3cad4; border-radius: 6px; }

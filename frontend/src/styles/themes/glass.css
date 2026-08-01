@@ -1,0 +1,155 @@
+/* ===== 玻璃拟态 Glassmorphism — frosted glass over gradient ===== */
+[data-theme="glass"] {
+    --bg: #1e2a44;
+    --surface: rgba(255, 255, 255, 0.09);
+    --surface-2: rgba(255, 255, 255, 0.06);
+    --border: rgba(255, 255, 255, 0.18);
+    --text: #eef2ff;
+    --muted: rgba(238, 242, 255, 0.62);
+    --accent: #7dd3fc;
+    --accent-2: #a78bfa;
+    --safe: #6ee7a0;
+    --moderate: #fcd34d;
+    --danger: #fb7185;
+    --radius: 16px;
+    --radius-lg: 22px;
+    --font: 'Segoe UI', system-ui, sans-serif;
+    --mono: 'Cascadia Code', 'Consolas', monospace;
+    --bar-bg: rgba(255, 255, 255, 0.1);
+    --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+
+/* gradient backdrop with drifting light orbs */
+[data-theme="glass"] body {
+    background: linear-gradient(135deg, #1b2a4a 0%, #2d3f6e 35%, #3b2d5e 70%, #221b3f 100%);
+}
+[data-theme="glass"] body::before,
+[data-theme="glass"] body::after {
+    content: "";
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(70px);
+    z-index: 0;
+    pointer-events: none;
+}
+[data-theme="glass"] body::before {
+    width: 420px;
+    height: 420px;
+    top: -120px;
+    right: -80px;
+    background: rgba(125, 211, 252, 0.35);
+    animation: glass-drift-1 16s ease-in-out infinite alternate;
+}
+[data-theme="glass"] body::after {
+    width: 360px;
+    height: 360px;
+    bottom: -100px;
+    left: -70px;
+    background: rgba(167, 139, 250, 0.35);
+    animation: glass-drift-2 20s ease-in-out infinite alternate;
+}
+@keyframes glass-drift-1 {
+    from { transform: translate(0, 0) scale(1); }
+    to { transform: translate(-90px, 70px) scale(1.15); }
+}
+@keyframes glass-drift-2 {
+    from { transform: translate(0, 0) scale(1.1); }
+    to { transform: translate(100px, -60px) scale(0.95); }
+}
+
+[data-theme="glass"] .app { z-index: 1; }
+
+/* frosted panels */
+[data-theme="glass"] .panel,
+[data-theme="glass"] .clean-group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(18px) saturate(1.5);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+[data-theme="glass"] .brand-name {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+[data-theme="glass"] .btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(10px);
+    color: var(--text);
+}
+[data-theme="glass"] .btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.16); }
+[data-theme="glass"] .btn-primary {
+    background: linear-gradient(120deg, rgba(125, 211, 252, 0.85), rgba(167, 139, 250, 0.85));
+    border-color: transparent;
+    color: #16213a;
+    font-weight: 700;
+}
+[data-theme="glass"] .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+[data-theme="glass"] .btn-danger {
+    background: rgba(251, 113, 133, 0.18);
+    border-color: rgba(251, 113, 133, 0.5);
+    color: #fecdd3;
+}
+[data-theme="glass"] .btn-danger:hover:not(:disabled) {
+    background: rgba(251, 113, 133, 0.9);
+    color: #1c1220;
+}
+
+[data-theme="glass"] .view-tabs {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+}
+[data-theme="glass"] .view-tab.active {
+    background: rgba(255, 255, 255, 0.16);
+    color: var(--accent);
+}
+
+[data-theme="glass"] .drive-tab {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border);
+    color: var(--muted);
+}
+[data-theme="glass"] .drive-tab.active {
+    background: linear-gradient(120deg, var(--accent), var(--accent-2));
+    border-color: transparent;
+    color: #16213a;
+    font-weight: 700;
+}
+
+[data-theme="glass"] .drive-fill {
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 12px rgba(125, 211, 252, 0.6);
+}
+[data-theme="glass"] .drive-bar { background: var(--bar-bg); backdrop-filter: blur(4px); }
+
+[data-theme="glass"] .dir-row:hover,
+[data-theme="glass"] .file-row:hover,
+[data-theme="glass"] .clean-item:hover { background: rgba(255, 255, 255, 0.1); }
+
+[data-theme="glass"] .crumb { color: var(--accent); }
+
+[data-theme="glass"] .modal {
+    background: rgba(35, 45, 75, 0.72);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(26px) saturate(1.4);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="glass"] .toast {
+    background: rgba(35, 45, 75, 0.75);
+    backdrop-filter: blur(18px);
+    border: 1px solid var(--border);
+}
+
+[data-theme="glass"] .admin-bar {
+    background: rgba(252, 211, 77, 0.12);
+    border-color: rgba(252, 211, 77, 0.35);
+    backdrop-filter: blur(10px);
+}

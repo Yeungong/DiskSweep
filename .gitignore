@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+dist/
+frontend/dist/
+
+# Dependencies
+node_modules/
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# Local user data (never commit)
+*.db
+*.db-wal
+*.db-shm
+
+# Compiled binaries (except intended release artifacts)
+*.exe
+!build/bin/*.exe
