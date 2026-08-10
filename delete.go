@@ -155,8 +155,25 @@ func (a *App) recycleMatchingFiles(dir, match string, maxAgeDays int) (int64, []
 			paths[j] = t.Path
 		}
 		if err := movePathsToRecycleBin(paths); err != nil {
-			// Whole chunk failed; report each path individually.
+			// SHFileOperation can move part of the batch and still return an
+			// error code (e.g. one file is locked). Verify each path: if it is
+			// gone it actually succeeded; if it still exists, retry it alone
+			// so only genuine failures are reported.
+			var retry []PathOutcome
 			for _, t := range chunk {
+				if _, statErr := os.Lstat(t.Path); os.IsNotExist(statErr) {
+					freed += t.Size
+					handled = append(handled, PathOutcome{Path: t.Path, Size: t.Size})
+					continue
+				}
+				retry = append(retry, t)
+			}
+			for _, t := range retry {
+				if err := moveToRecycleBin(t.Path); err == nil {
+					freed += t.Size
+					handled = append(handled, PathOutcome{Path: t.Path, Size: t.Size})
+					continue
+				}
 				errs = append(errs, PathError{Path: t.Path, Kind: classifyErr(err), Error: err.Error()})
 				handled = append(handled, PathOutcome{Path: t.Path, Size: t.Size, Err: err.Error()})
 			}
@@ -317,24 +334,37 @@ const (
 	errnoSharingViolation = syscall.Errno(32)
 	errnoLockViolation    = syscall.Errno(33)
 	errnoAccessDenied     = syscall.Errno(5)
+	errnoInvalidLevel     = syscall.Errno(124) // SHFileOperation reports this for in-use files
 )
 
-func isLockedErr(err error) bool {
-	if pe, ok := err.(*os.PathError); ok {
-		if errno, ok := pe.Err.(syscall.Errno); ok {
-			return errno == errnoSharingViolation || errno == errnoLockViolation
-		}
+// errnoOf extracts the Windows error number from an error, which may be a
+// *os.PathError wrapping a syscall.Errno, or a bare syscall.Errno (as
+// returned by SHFileOperationW).
+func errnoOf(err error) (syscall.Errno, bool) {
+	switch e := err.(type) {
+	case *os.PathError:
+		n, ok := e.Err.(syscall.Errno)
+		return n, ok
+	case syscall.Errno:
+		return e, true
 	}
-	return false
+	return 0, false
+}
+
+func isLockedErr(err error) bool {
+	n, ok := errnoOf(err)
+	if !ok {
+		return false
+	}
+	return n == errnoSharingViolation || n == errnoLockViolation || n == errnoInvalidLevel
 }
 
 func isPermissionErr(err error) bool {
-	if pe, ok := err.(*os.PathError); ok {
-		if errno, ok := pe.Err.(syscall.Errno); ok {
-			return errno == errnoAccessDenied || errno == syscall.EACCES
-		}
+	n, ok := errnoOf(err)
+	if !ok {
+		return false
 	}
-	return false
+	return n == errnoAccessDenied || n == syscall.EACCES
 }
 
 // --- recycle-bin moves (SHFileOperationW with FOF_ALLOWUNDO) ---
