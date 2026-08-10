@@ -23,3 +23,6 @@ Desktop.ini
 # Compiled binaries (except intended release artifacts)
 *.exe
 !build/bin/*.exe
+
+# Wails build resource artifacts
+*.syso

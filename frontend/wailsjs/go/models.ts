@@ -113,6 +113,7 @@ export namespace main {
 	    size: number;
 	    fileCount: number;
 	    modTime: number;
+	    inaccessible: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new DirChild(source);
@@ -126,6 +127,7 @@ export namespace main {
 	        this.size = source["size"];
 	        this.fileCount = source["fileCount"];
 	        this.modTime = source["modTime"];
+	        this.inaccessible = source["inaccessible"];
 	    }
 	}
 	export class DriveInfo {
