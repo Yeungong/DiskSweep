@@ -2,8 +2,11 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -69,6 +72,11 @@ func (a *App) cleanItemDefs() []CleanItem {
 			ID: "temp_user", Name: "用户临时文件",
 			Description: "超过 7 天的 %TEMP% 临时文件",
 			Level:       LevelSafe, Paths: []string{la("Temp")}, MaxAgeDays: 7,
+		},
+		{
+			ID: "temp_user_all", Name: "用户临时文件（全量）",
+			Description: "清理全部 %TEMP% 内容（正在使用的文件会跳过）",
+			Level:       LevelSafe, Paths: []string{la("Temp")},
 		},
 		{
 			ID: "temp_windows", Name: "Windows 临时文件",
@@ -362,6 +370,78 @@ func (a *App) cleanItemDefs() []CleanItem {
 			Description: "旧系统备份目录（删除不可恢复）",
 			Level:       LevelCautious, Paths: []string{`C:\Windows.old`}, RequiresAdmin: true,
 		},
+		{
+			ID: "uv_cache", Name: "uv 包缓存",
+			Description: "Python uv 下载的包缓存（重新安装时重新下载）",
+			Level:       LevelModerate, Paths: []string{la("uv")},
+		},
+		{
+			ID: "playwright_cache", Name: "Playwright 浏览器",
+			Description: "Playwright 下载的测试用浏览器（需要时重新下载）",
+			Level:       LevelModerate, Paths: []string{la("ms-playwright")},
+		},
+		{
+			ID: "netease_cache", Name: "网易云音乐缓存",
+			Description: "NetEase 客户端缓存（重新播放时重新缓存）",
+			Level:       LevelModerate, Paths: []string{la("NetEase")},
+		},
+		{
+			ID: "thunder_cache", Name: "迅雷下载缓存",
+			Description: "Thunder Network 客户端缓存（重新下载时重新缓存）",
+			Level:       LevelModerate, Paths: []string{la("Thunder Network")},
+		},
+		{
+			ID: "douyin_cache", Name: "抖音/DouyinAR 缓存",
+			Description: "抖音相关应用缓存（重新使用时重建）",
+			Level:       LevelModerate,
+			Paths: []string{
+				la("DouyinAR"),
+				filepath.Join(roamingAppData(), "douyin"),
+			},
+		},
+		{
+			ID: "blizzard_cache", Name: "暴雪/战网缓存",
+			Description: "Blizzard 与 Battle.net 客户端缓存",
+			Level:       LevelModerate,
+			Paths: []string{
+				la("Blizzard Entertainment"),
+				la("Battle.net"),
+			},
+		},
+		{
+			ID: "tencent_cache", Name: "腾讯系应用缓存",
+			Description: "Roaming\\Tencent 下的 QQ/微信等客户端缓存",
+			Level:       LevelCautious, Paths: []string{filepath.Join(roamingAppData(), "Tencent")},
+		},
+		{
+			ID: "code_cache", Name: "VS Code 缓存",
+			Description: "VS Code 的缓存与日志（重新打开时重建）",
+			Level:       LevelModerate,
+			Paths: []string{
+				filepath.Join(roamingAppData(), "Code", "Cache"),
+				filepath.Join(roamingAppData(), "Code", "CachedData"),
+				filepath.Join(roamingAppData(), "Code", "logs"),
+				filepath.Join(roamingAppData(), "Code", "Code Cache"),
+			},
+		},
+		{
+			ID: "vss_shadows", Name: "系统还原点（卷影副本）",
+			Description: "删除所有盘的系统还原点（不可恢复，无法移入回收站）",
+			Level:         LevelCautious,
+			Paths:         []string{`C:\System Volume Information`},
+			RequiresAdmin: true,
+		},
+		{
+			ID: "win_upgrade_residue", Name: "Windows 升级残留",
+			Description: "$WINDOWS.~BT / $Windows.~WS / ESD 升级残留文件（删除不可恢复）",
+			Level:       LevelCautious,
+			Paths: []string{
+				`C:\$WINDOWS.~BT`,
+				`C:\$Windows.~WS`,
+				`C:\ESD`,
+			},
+			RequiresAdmin: true,
+		},
 	}
 }
 
@@ -410,6 +490,30 @@ func (a *App) CleanupItems() []CleanItem {
 // cleanup center always reflects the current disk state, even if the
 // snapshot is stale or the scan happened long ago.
 func (a *App) probeItem(item *CleanItem) {
+	// System-level items whose primary path is unreadable by design
+	// (permission-denied), so os.Stat would hide them. Probe them specially.
+	switch item.ID {
+	case "vss_shadows":
+		a.probeVSS(item)
+		return
+	case "win_upgrade_residue":
+		item.Exists = false
+		for _, p := range item.Paths {
+			if _, err := os.Stat(p); err != nil {
+				continue // directory not present (or hidden); nothing to clean
+			}
+			item.Exists = true
+			if item.Drive == "" && len(p) > 1 {
+				item.Drive = strings.ToUpper(p[:1])
+			}
+			// Sizes come from a best-effort walk; permission errors are ignored.
+			s, fc := walkDirSize(p)
+			item.Size += s
+			item.FileCount += fc
+		}
+		return
+	}
+
 	for _, p := range item.Paths {
 		info, err := os.Stat(p)
 		if err != nil {
@@ -428,6 +532,48 @@ func (a *App) probeItem(item *CleanItem) {
 			item.FileCount++
 		}
 	}
+}
+
+// probeVSS fills a vss_shadows item. The System Volume Information directory
+// is unreadable without SYSTEM privileges, so we rely on vssadmin (admin) to
+// report the storage usage; without admin we still show the item with 0 size
+// and let the RequiresAdmin badge explain it.
+func (a *App) probeVSS(item *CleanItem) {
+	item.Exists = false
+	if _, err := os.Stat(`C:\System Volume Information`); err != nil {
+		return // no system restore volume at all
+	}
+	item.Exists = true
+	item.Drive = "C"
+	item.FileCount = 1
+	// Try vssadmin for a real size (needs elevation). Non-fatal.
+	if out, err := exec.Command("vssadmin", "list", "shadowstorage").CombinedOutput(); err == nil {
+		item.Size = parseVSSUsedBytes(string(out))
+	}
+}
+
+// parseVSSUsedBytes extracts the used space from `vssadmin list shadowstorage`
+// output. The output is localized, so we match the "used" line and read the
+// byte count in its parentheses, e.g.
+//   zh: "已使用的空间: 5.10 GB (5476081664 字节)"
+//   en: "Used Space: 1.50 GB (1610612736 bytes)"
+// Only the used line is counted (max-space lines carry their own numbers).
+func parseVSSUsedBytes(out string) int64 {
+	lines := strings.Split(out, "\n")
+	var total int64
+	for _, ln := range lines {
+		if !strings.Contains(ln, "(") {
+			continue
+		}
+		if strings.Contains(ln, "已使用的空间") || strings.Contains(ln, "Used Space") {
+			re := regexp.MustCompile(`\((\d+)\s*(?:字节|bytes)\)`)
+			if m := re.FindStringSubmatch(ln); len(m) == 2 {
+				n, _ := strconv.ParseInt(m[1], 10, 64)
+				total += n
+			}
+		}
+	}
+	return total
 }
 
 // dirSizeCached returns a directory's size from the scan cache, falling back

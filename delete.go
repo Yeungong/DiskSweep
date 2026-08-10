@@ -67,6 +67,15 @@ func (a *App) executeItem(item CleanItem) CleanResult {
 		return res
 	}
 
+	// System-level items executed via privileged commands. They permanently
+	// delete data (no recycle-bin undo), so they must run elevated.
+	switch item.ID {
+	case "vss_shadows":
+		return a.executeVSS(item)
+	case "win_upgrade_residue":
+		return a.executeUpgradeResidue(item)
+	}
+
 	for _, p := range item.Paths {
 		info, err := os.Stat(p)
 		if err != nil || !info.IsDir() {
@@ -297,10 +306,97 @@ func removeEmptyDir(p string, errs *[]PathError) {
 	}
 }
 
+// executeVSS deletes all system restore points (shadow copies) via vssadmin.
+// This is a permanent deletion - shadow copies cannot go to the recycle bin.
+// Requires an elevated process; a non-admin attempt is reported as a
+// permission failure.
+func (a *App) executeVSS(item CleanItem) CleanResult {
+	res := CleanResult{ID: item.ID, Name: item.Name}
+	if !a.IsAdmin() {
+		res.OK = false
+		res.Errors = []PathError{{
+			Path:  `C:\System Volume Information`,
+			Kind:  ErrPermission,
+			Error: "需要管理员权限删除系统还原点",
+		}}
+		return res
+	}
+	before := item.Size
+	cmd := exec.Command("vssadmin", "delete", "shadows", "/all", "/quiet")
+	if err := cmd.Run(); err != nil {
+		res.OK = false
+		res.Errors = []PathError{{
+			Path:  `vssadmin`,
+			Kind:  ErrOther,
+			Error: "删除卷影副本失败: " + err.Error(),
+		}}
+		return res
+	}
+	// Best-effort estimate of freed space from the pre-delete probe.
+	res.OK = true
+	res.Freed = before
+	if res.Freed == 0 {
+		res.Warning = "卷影副本已删除（释放空间量未知，以磁盘剩余空间变化为准）"
+	}
+	a.recordHistory(item, "系统还原点（全部卷影副本）", before, true, "")
+	return res
+}
+
+// executeUpgradeResidue removes Windows upgrade leftovers. These directories
+// are owned by TrustedInstaller, so even admins usually need takeown/icacls
+// before deletion. We attempt the delete and report per-path outcomes.
+func (a *App) executeUpgradeResidue(item CleanItem) CleanResult {
+	res := CleanResult{ID: item.ID, Name: item.Name}
+	if !a.IsAdmin() {
+		res.OK = false
+		res.Errors = []PathError{{
+			Path:  item.Paths[0],
+			Kind:  ErrPermission,
+			Error: "需要管理员权限删除升级残留",
+		}}
+		return res
+	}
+	for _, p := range item.Paths {
+		info, err := os.Stat(p)
+		if err != nil || !info.IsDir() {
+			continue // already gone
+		}
+		// Estimate size before deletion (best effort).
+		size, _ := walkDirSize(p)
+		// Grant current admin full control, then delete permanently.
+		if err := takeownAndDelete(p); err != nil {
+			res.Errors = append(res.Errors, PathError{Path: p, Kind: classifyErr(err), Error: err.Error()})
+			continue
+		}
+		res.Freed += size
+		a.recordHistory(item, p, size, true, "")
+	}
+	res.OK = len(res.Errors) == 0
+	if res.OK && res.Freed == 0 {
+		res.Warning = "没有可删除的升级残留（可能已清理）"
+	}
+	return res
+}
+
+// takeownAndDelete takes ownership of a directory tree and permanently
+// deletes it. Needed for TrustedInstaller-owned upgrade leftovers.
+func takeownAndDelete(p string) error {
+	// takeown /F <path> /R /D Y takes ownership recursively (prompts suppressed).
+	t := exec.Command("takeown", "/F", p, "/R", "/D", "Y")
+	if out, err := t.CombinedOutput(); err != nil {
+		_ = out
+		// Some subpaths may still fail; continue to icacls anyway.
+	}
+	i := exec.Command("icacls", p, "/grant", "Administrators:F", "/T", "/Q", "/C")
+	if out, err := i.CombinedOutput(); err != nil {
+		_ = out
+	}
+	return os.RemoveAll(p)
+}
+
 // emptyRecycleBin empties the recycle bin of every fixed drive, returning the
 // space freed (estimated from the sizes before emptying).
-func (a *App) emptyRecycleBin() int64 {
-	var total int64
+func (a *App) emptyRecycleBin() int64 {	var total int64
 	for _, p := range a.recycleBinPaths() {
 		if s, _ := walkDirSize(p); s > 0 {
 			total += s

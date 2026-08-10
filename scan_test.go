@@ -197,4 +197,23 @@ func TestScanAccessDeniedDirDoesNotCrash(t *testing.T) {
 			t.Fatal("blocked subtree was counted despite access denial")
 		}
 	}
+	// The blocked directory must be reported as inaccessible.
+	if _, bad := a.scans.inaccessible.Load(blocked); !bad {
+		t.Fatal("blocked dir was not flagged inaccessible")
+	}
+	// Children listing must mark it.
+	children := a.GetDirChildren(root)
+	for _, c := range children {
+		if c.Name == "blocked" && !c.Inaccessible {
+			t.Fatal("blocked dir should be marked Inaccessible in children")
+		}
+	}
+	// Summary must include the count and a sample path.
+	summary := a.lastSummary()
+	if summary == nil || summary.InaccessibleDirs == 0 {
+		t.Fatal("summary should report inaccessible dirs")
+	}
+	if len(summary.InaccessibleSample) == 0 {
+		t.Fatal("summary should include a sample inaccessible path")
+	}
 }

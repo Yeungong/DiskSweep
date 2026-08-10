@@ -12,14 +12,16 @@
 **中文**：C 盘空间不明去向、AI 工具悄悄堆了几 GB 缓存、系统垃圾清理工具又慢又扫不全、还怕误删重要数据。
 
 - **扫不全** → 并发扫描引擎全盘分析，目录下钻 + 大文件 Top，空间去向一目了然
-- **清不干净** → 52 条规则化清理项自动探测（含 35+ 条 AI 工具），占用/权限错误重试并逐项报告
+- **清不干净** → 63 条规则化清理项自动探测（含 35+ 条 AI 工具），占用/权限错误重试并逐项报告
 - **怕误删** → 所有清理移入回收站 + 完整历史记录 + 一键恢复，删错了也能捞回来
+- **扫不到** → 无权限目录（系统还原点、升级残留等）明确标记"⚠ 无权限"，不再静默显示 0，提示提权后重扫
 
 **English**: C: drive mysteriously full, AI tools silently piling up gigabytes of cache, system cleaners that are slow and miss most junk — and the fear of deleting important data.
 
 - **Incomplete scans** → a concurrent scan engine analyzes the whole disk; drill down directories + top-file list show exactly where space went
-- **Incomplete cleaning** → 52 rule-based cleanup entries auto-detected (35+ AI tools), retries on locked/permission errors and reports each failure
+- **Incomplete cleaning** → 63 rule-based cleanup entries auto-detected (35+ AI tools), retries on locked/permission errors and reports each failure
 - **Deletion anxiety** → every cleanup goes to the Recycle Bin, a full history with one-click restore, so nothing is truly lost
+- **Invisible usage** → permission-denied dirs (system restore points, upgrade leftovers) are flagged "⚠ no access" instead of silently showing 0, with a hint to re-scan elevated
 
 ---
 
@@ -33,13 +35,14 @@
 | 目录树下钻 / Drill-down directory tree | 面包屑导航逐层查看目录占用，按大小排序。Breadcrumb navigation, size-sorted |
 | 大文件 Top 200 / Top-200 files | 全盘最大文件列表，可定位到资源管理器 / 移入回收站。Locate in Explorer / send to Recycle Bin |
 | 实时进度 + 取消 / Live progress & cancel | 目录数 / 百分比 / 字节实时推送。Dirs / percent / bytes pushed live |
+| 无权限目录标记 / Inaccessible-dir flagging | 权限拒绝的目录（系统还原点、升级残留等）标"⚠ 无权限"并计入扫描统计，不再静默显示 0。Permission-denied dirs are flagged and counted |
 | SQLite 快照缓存 / SQLite snapshot cache | 重启秒级恢复上次扫描结果（可换盘存放）。Instant restore on relaunch (relocatable) |
 
 ### 清理中心 / Cleanup Center
 
 | 功能 / Feature | 说明 / Description |
 |---|---|
-| 52 条规则化清理项 / 52 rule-based entries | 自动探测**实际存在**的路径，不存在的不显示。Only paths that actually exist are shown |
+| 63 条规则化清理项 / 63 rule-based entries | 自动探测**实际存在**的路径，不存在的不显示。Only paths that actually exist are shown |
 | 三级分级 / 3 safety levels | 🟢 安全（临时文件/缓存）· 🟡 中等（重建类）· 🔴 谨慎（数据/登录态，默认不勾选） |
 | **AI 工具专项 / AI-tool coverage** | Codex、Claude Code、Cline、OpenCode、Copilot、Cursor、Windsurf、Trae、Kimi、豆包、Coze、Qoder、Cherry Studio、Ollama、LM Studio 等 35+ 工具 |
 | 删除执行器 / Delete executor | 全部**移入回收站**；占用/权限错误重试 3 次、自动清除只读、逐项报告失败原因 |

@@ -54,17 +54,22 @@ export async function render() {
         return;
     }
 
-    const row = (c, isDir) => `
-        <div class="dir-row" data-path="${esc(c.path)}">
-            <span class="row-icon">${isDir ? '📁' : '📄'}</span>
-            <span class="row-name" title="${esc(c.path)}">${esc(c.name)}</span>
-            <span class="row-size">${fmtBytes(c.size)}</span>
-            <span class="row-count">${c.isDir ? c.fileCount + ' 文件' : ''}</span>
+    const row = (c, isDir) => {
+        const inaccessible = c.inaccessible
+            ? '<span class="row-badge" title="该目录存在但无权限读取，可能隐藏大量占用">⚠ 无权限</span>'
+            : '';
+        return `
+        <div class="dir-row" data-path="${esc(c.path)}" ${c.inaccessible ? 'data-locked="1"' : ''}>
+            <span class="row-icon">${isDir ? (c.inaccessible ? '🔒' : '📁') : '📄'}</span>
+            <span class="row-name" title="${esc(c.path)}">${esc(c.name)}${inaccessible}</span>
+            <span class="row-size">${c.inaccessible ? '—' : fmtBytes(c.size)}</span>
+            <span class="row-count">${c.isDir && !c.inaccessible ? c.fileCount + ' 文件' : ''}</span>
             <span class="row-actions">
                 <button class="mini-btn" data-act="open" title="在资源管理器中打开">⌕</button>
                 ${isDir ? '' : '<button class="mini-btn" data-act="recycle" title="移入回收站">🗑</button>'}
             </span>
         </div>`;
+    };
 
     list.innerHTML = [
         ...dirs.map(d => row(d, true)),
@@ -75,11 +80,14 @@ export async function render() {
         const p = el.dataset.path;
         // double-click / name click drills into directories
         el.addEventListener('dblclick', () => {
-            if (el.querySelector('.row-icon').textContent === '📁') {
-                state.dirStack.push(p);
-                state.currentPath = p;
-                render();
+            if (el.querySelector('.row-icon').textContent !== '📁') return;
+            if (el.dataset.locked) {
+                toast('该目录无权限读取，请以管理员身份重启后重扫', 'err');
+                return;
             }
+            state.dirStack.push(p);
+            state.currentPath = p;
+            render();
         });
         el.querySelector('[data-act="open"]').addEventListener('click', (e) => {
             e.stopPropagation();

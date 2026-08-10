@@ -16,12 +16,13 @@ import (
 
 // DirChild is one entry (file or directory) in a scanned directory listing.
 type DirChild struct {
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	IsDir     bool   `json:"isDir"`
-	Size      int64  `json:"size"`
-	FileCount int    `json:"fileCount"`
-	ModTime   int64  `json:"modTime"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	IsDir       bool   `json:"isDir"`
+	Size        int64  `json:"size"`
+	FileCount   int    `json:"fileCount"`
+	ModTime     int64  `json:"modTime"`
+	Inaccessible bool   `json:"inaccessible"` // true: dir exists but cannot be read (no permission)
 }
 
 // ScanProgress is emitted to the frontend during a scan.
@@ -43,6 +44,12 @@ type ScanSummary struct {
 	Bytes     int64  `json:"bytes"`
 	Errors    int    `json:"errors"`
 	Duration  int64  `json:"durationMs"`
+
+	// Inaccessible lists directories that exist but could not be read
+	// (typically permission-denied). Their sizes are NOT included in Bytes,
+	// so they may hide significant disk usage.
+	InaccessibleDirs   int      `json:"inaccessibleDirs"`
+	InaccessibleSample []string `json:"inaccessibleSample,omitempty"` // first few paths
 }
 
 type dirInfo struct {
@@ -61,9 +68,24 @@ type scanManager struct {
 	bytes     int64
 	errs      int64
 
-	sizeMap sync.Map // path -> dirInfo
+	sizeMap      sync.Map // path -> dirInfo
+	inaccessible sync.Map // path -> struct{} (dir exists but unreadable)
+
+	last ScanSummary // most recent finished scan summary (guarded by mu)
 
 	emit func(event string, data interface{}) // injectable; defaults to runtime.EventsEmit
+}
+
+// lastSummary returns the most recent finished scan summary, or nil if no
+// scan has completed yet.
+func (a *App) lastSummary() *ScanSummary {
+	a.scans.mu.Lock()
+	defer a.scans.mu.Unlock()
+	if a.scans.last.Root == "" && a.scans.last.Dirs == 0 && a.scans.last.Bytes == 0 {
+		return nil
+	}
+	s := a.scans.last
+	return &s
 }
 
 func defaultEmit(ctx context.Context) func(string, interface{}) {
@@ -84,6 +106,7 @@ func (a *App) StartScan(root string, topN int) error {
 	}
 	a.scans.mu.Lock()
 	a.scans.sizeMap = sync.Map{}
+	a.scans.inaccessible = sync.Map{}
 	a.scans.dirsTotal = 0
 	a.scans.dirsDone = 0
 	a.scans.files = 0
@@ -124,6 +147,9 @@ func (a *App) GetDirChildren(path string) []DirChild {
 			IsDir: e.IsDir(),
 		}
 		if e.IsDir() {
+			if _, bad := a.scans.inaccessible.Load(child.Path); bad {
+				child.Inaccessible = true
+			}
 			if v, ok := a.scans.sizeMap.Load(child.Path); ok {
 				di := v.(dirInfo)
 				child.Size = di.size
@@ -171,6 +197,7 @@ func (a *App) enumerateDirs(root string) []string {
 		entries, err := os.ReadDir(cur)
 		if err != nil {
 			atomic.AddInt64(&a.scans.errs, 1)
+			a.scans.inaccessible.Store(cur, struct{}{})
 			continue
 		}
 		for _, e := range entries {
@@ -240,6 +267,7 @@ func (a *App) scanOneDir(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		atomic.AddInt64(&a.scans.errs, 1)
+		a.scans.inaccessible.Store(dir, struct{}{})
 		a.scans.sizeMap.Store(dir, dirInfo{0, 0})
 		return
 	}
@@ -305,6 +333,17 @@ func (a *App) finishScan(ok, cancelled bool, root string, start time.Time) {
 		Errors:    int(a.scans.errs),
 		Duration:  time.Since(start).Milliseconds(),
 	}
+	// Collect unreadable directories (no lock needed: sync.Map).
+	var sample []string
+	a.scans.inaccessible.Range(func(k, _ interface{}) bool {
+		summary.InaccessibleDirs++
+		if len(sample) < 20 {
+			sample = append(sample, k.(string))
+		}
+		return true
+	})
+	summary.InaccessibleSample = sample
+	a.scans.last = summary
 	a.scans.mu.Unlock()
 	a.scans.scanning.Store(false)
 	a.scans.emit("scan:done", summary)

@@ -17,6 +17,9 @@ Desktop.ini
 *.db-wal
 *.db-shm
 
+# Workspace memory / agent data (never commit)
+.workbuddy/
+
 # Compiled binaries (except intended release artifacts)
 *.exe
 !build/bin/*.exe

@@ -29,6 +29,13 @@ function esc(s) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Items that permanently delete data (no recycle-bin undo).
+const PERMANENT_IDS = new Set(['recycle_bin', 'vss_shadows', 'win_upgrade_residue', 'windows_old']);
+
+function isPermanent(it) {
+    return PERMANENT_IDS.has(it.id);
+}
+
 export async function refresh() {
     const groups = document.getElementById('cleanGroups');
     groups.innerHTML = '<div class="empty-state">正在探测清理项…</div>';
@@ -56,15 +63,15 @@ export async function refresh() {
     const collapsed = new Set(driveOrder.filter(d => d !== state.currentDrive));
 
     const itemHTML = (it) => `
-        <label class="clean-item">
-            <input type="checkbox" data-id="${it.id}" ${it.level === 'safe' && it.id !== 'recycle_bin' ? 'checked' : ''}>
-            <div class="item-info">
-                <div class="item-name">${esc(it.name)}</div>
-                <div class="item-path">${it.requiresAdmin && !state.isAdmin ? '🔒 ' : ''}${esc(it.paths.join('；'))}</div>
-            </div>
-            <span class="item-size">${fmtBytes(it.size)}</span>
-            ${it.requiresAdmin && !state.isAdmin ? '<span class="badge badge-admin">需管理员</span>' : ''}
-        </label>`;
+    <label class="clean-item">
+        <input type="checkbox" data-id="${it.id}" ${it.level === 'safe' && it.id !== 'recycle_bin' ? 'checked' : ''}>
+        <div class="item-info">
+            <div class="item-name">${esc(it.name)}${isPermanent(it) ? ' <span class="badge badge-danger">永久删除</span>' : ''}</div>
+            <div class="item-path">${it.requiresAdmin && !state.isAdmin ? '🔒 ' : ''}${esc(it.paths.join('；'))}</div>
+        </div>
+        <span class="item-size">${fmtBytes(it.size)}</span>
+        ${it.requiresAdmin && !state.isAdmin ? '<span class="badge badge-admin">需管理员</span>' : ''}
+    </label>`;
 
     const levelBlockHTML = (its) => byLevelKeys.map(level => {
         const list = its.filter(it => it.level === level);
@@ -156,16 +163,21 @@ function initClean() {
 
         const adminNeeded = items.some(it => it.requiresAdmin && !state.isAdmin);
         const body = `
-            <p>将清理以下 ${items.length} 项，预计移入回收站 <b>${fmtBytes(items.reduce((s, it) => s + it.size, 0))}</b>：</p>
+            <p>将清理以下 ${items.length} 项，预计释放 <b>${fmtBytes(items.reduce((s, it) => s + it.size, 0))}</b>：</p>
             <div class="modal-items">
                 ${items.map(it => {
-                    const nature = it.id === 'recycle_bin'
-                        ? '<span class="modal-nature modal-warn">⚠ 将永久清空回收站</span>'
-                        : '<span class="modal-nature">移入回收站（可恢复）</span>';
+                    let nature;
+                    if (it.id === 'vss_shadows') {
+                        nature = '<span class="modal-nature modal-danger">⚠ 将永久删除系统还原点，不可恢复</span>';
+                    } else if (isPermanent(it)) {
+                        nature = '<span class="modal-nature modal-danger">⚠ 将永久删除，不可恢复</span>';
+                    } else {
+                        nature = '<span class="modal-nature">移入回收站（可恢复）</span>';
+                    }
                     return `<div class="modal-item"><span>${esc(it.name)}</span>${nature}<span>${fmtBytes(it.size)}</span></div>`;
                 }).join('')}
             </div>
-            <p class="modal-warn">清理不会直接删除文件，而是移入回收站；如需真正释放空间，请之后清空回收站。</p>
+            <p class="modal-warn">普通清理不会直接删除文件，而是移入回收站；如需真正释放空间，请之后清空回收站。</p>
             ${adminNeeded ? '<p class="modal-warn">⚠ 部分项目需要管理员权限，将以普通权限尝试，无法移动的会列出。</p>' : ''}
         `;
         showModal('确认清理', body, '确认清理', () => runClean(items.map(i => i.id)));

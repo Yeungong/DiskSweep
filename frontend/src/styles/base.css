@@ -459,6 +459,22 @@ button {
     border: 1px solid color-mix(in srgb, var(--moderate) 50%, transparent);
     background: color-mix(in srgb, var(--moderate) 12%, transparent);
 }
+.badge-danger {
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.row-badge {
+    font-size: 10px;
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-left: 6px;
+    white-space: nowrap;
+}
+.modal-nature.modal-danger { color: var(--danger); }
 [data-level="safe"] .item-size, [data-level="safe"] .group-total { color: var(--safe); }
 [data-level="moderate"] .item-size, [data-level="moderate"] .group-total { color: var(--moderate); }
 [data-level="cautious"] .item-size, [data-level="cautious"] .group-total { color: var(--danger); }

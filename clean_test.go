@@ -123,15 +123,65 @@ func TestRequiresAdminFlags(t *testing.T) {
 		}
 	}
 	// System-level paths must request elevation.
-	for _, id := range []string{"temp_windows", "wer", "windows_logs", "wu_downloads", "delivery_opt", "prefetch", "windows_old"} {
+	for _, id := range []string{"temp_windows", "wer", "windows_logs", "wu_downloads", "delivery_opt", "prefetch", "windows_old", "vss_shadows", "win_upgrade_residue"} {
 		if !admin[id] {
 			t.Errorf("%s should require admin", id)
 		}
 	}
 	// User-level caches must NOT require elevation.
-	for _, id := range []string{"temp_user", "npm_cache", "pip_cache", "crash_dumps", "thumb_cache", "browser_cache"} {
+	for _, id := range []string{"temp_user", "npm_cache", "pip_cache", "crash_dumps", "thumb_cache", "browser_cache", "uv_cache", "playwright_cache", "netease_cache", "thunder_cache", "douyin_cache", "blizzard_cache", "code_cache"} {
 		if admin[id] {
 			t.Errorf("%s should not require admin", id)
 		}
+	}
+}
+
+func TestNewCleanRulesCoverRealDirs(t *testing.T) {
+	a := &App{}
+	defs := map[string]CleanItem{}
+	for _, d := range a.cleanItemDefs() {
+		defs[d.ID] = d
+	}
+	// The cache-heavy rules added for v0.2 must exist with sensible levels.
+	cases := []struct{ id, level string }{
+		{"uv_cache", LevelModerate},
+		{"playwright_cache", LevelModerate},
+		{"netease_cache", LevelModerate},
+		{"thunder_cache", LevelModerate},
+		{"douyin_cache", LevelModerate},
+		{"blizzard_cache", LevelModerate},
+		{"tencent_cache", LevelCautious},
+		{"code_cache", LevelModerate},
+		{"temp_user_all", LevelSafe},
+		{"vss_shadows", LevelCautious},
+		{"win_upgrade_residue", LevelCautious},
+	}
+	for _, c := range cases {
+		item, ok := defs[c.id]
+		if !ok {
+			t.Errorf("missing rule %s", c.id)
+			continue
+		}
+		if item.Level != c.level {
+			t.Errorf("%s level = %q, want %q", c.id, item.Level, c.level)
+		}
+		if len(item.Paths) == 0 {
+			t.Errorf("%s has no paths", c.id)
+		}
+	}
+}
+
+func TestParseVSSUsedBytes(t *testing.T) {
+	// Simulated vssadmin output (zh-CN and en-US variants).
+	zh := "已使用的空间: 5.10 GB (5476081664 字节)\n最大空间: 30.00 GB (32212254720 字节)"
+	en := "Used Space: 1.50 GB (1610612736 bytes)\nMaximum Space: 10.00 GB (10737418240 bytes)"
+	if got := parseVSSUsedBytes(zh); got != 5476081664 {
+		t.Fatalf("zh parse = %d, want 5476081664", got)
+	}
+	if got := parseVSSUsedBytes(en); got != 1610612736 {
+		t.Fatalf("en parse = %d, want 1610612736", got)
+	}
+	if got := parseVSSUsedBytes("no numbers here"); got != 0 {
+		t.Fatalf("empty parse = %d, want 0", got)
 	}
 }

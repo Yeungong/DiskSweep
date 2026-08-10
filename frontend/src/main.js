@@ -192,8 +192,11 @@ function initScan() {
             document.getElementById('scanStatus').textContent = '扫描已取消';
             return;
         }
-        document.getElementById('scanStatus').textContent =
-            `扫描完成：${summary.dirs} 目录 · ${summary.files} 文件 · ${fmtBytes(summary.bytes)}（${(summary.durationMs / 1000).toFixed(1)}s）`;
+        const base = `扫描完成：${summary.dirs} 目录 · ${summary.files} 文件 · ${fmtBytes(summary.bytes)}（${(summary.durationMs / 1000).toFixed(1)}s）`;
+        const inaccessible = summary.inaccessibleDirs > 0
+            ? ` · ⚠ ${summary.inaccessibleDirs} 个目录无权限读取（可能隐藏占用，建议提权后重扫）`
+            : '';
+        document.getElementById('scanStatus').textContent = base + inaccessible;
         state.dirStack = [state.currentPath];
         state.dirCache.clear();
         state.topFiles = null; // force re-fetch, drop stale snapshot data
