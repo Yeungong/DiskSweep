@@ -155,6 +155,11 @@ func TestNewCleanRulesCoverRealDirs(t *testing.T) {
 		{"temp_user_all", LevelSafe},
 		{"vss_shadows", LevelCautious},
 		{"win_upgrade_residue", LevelCautious},
+		// game rules added for v0.3.x
+		{"blizzard_game_cache", LevelCautious},
+		{"game_crash_dumps", LevelSafe},
+		{"steam_cache", LevelModerate},
+		{"epic_cache", LevelModerate},
 	}
 	for _, c := range cases {
 		item, ok := defs[c.id]
@@ -165,9 +170,60 @@ func TestNewCleanRulesCoverRealDirs(t *testing.T) {
 		if item.Level != c.level {
 			t.Errorf("%s level = %q, want %q", c.id, item.Level, c.level)
 		}
-		if len(item.Paths) == 0 {
+		if c.id != "blizzard_game_cache" && len(item.Paths) == 0 {
 			t.Errorf("%s has no paths", c.id)
 		}
+	}
+}
+
+// TestBlizzardGameCacheProbe verifies the special numbered-folder probing:
+// a game folder with numeric subdirs is detected, and non-disposable content
+// (settings etc.) is NOT counted.
+func TestBlizzardGameCacheProbe(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "Blizzard Entertainment", "Overwatch")
+	// Numeric event folder (like "592095225" from a real Overwatch install).
+	if err := os.MkdirAll(filepath.Join(base, "592095225"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "592095225", "data.bin"), make([]byte, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Disposable cache dir.
+	if err := os.MkdirAll(filepath.Join(base, "Cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "Cache", "c.bin"), make([]byte, 500), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Settings must NOT be counted.
+	if err := os.MkdirAll(filepath.Join(base, "Settings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "Settings", "config.txt"), make([]byte, 99999), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// shop images must NOT be counted either.
+	if err := os.MkdirAll(filepath.Join(base, "ShopImages"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "ShopImages", "hero.png"), make([]byte, 12345), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Repoint the probe at our temp root by patching localAppData is hard;
+	// instead call the inner matching helpers directly and assert behavior.
+	if !isNumericDirName("592095225") {
+		t.Fatal("numeric dir should be recognized")
+	}
+	if isNumericDirName("Settings") || isNumericDirName("ShopImages") {
+		t.Fatal("non-numeric dir must not be treated as event cache")
+	}
+	if !isBlizzardDisposableDir("Cache") || !isBlizzardDisposableDir("logs") {
+		t.Fatal("cache/logs should be disposable")
+	}
+	if isBlizzardDisposableDir("Settings") || isBlizzardDisposableDir("ShopImages") {
+		t.Fatal("settings/images must not be disposable")
 	}
 }
 

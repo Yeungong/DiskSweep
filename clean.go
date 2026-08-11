@@ -400,12 +400,71 @@ func (a *App) cleanItemDefs() []CleanItem {
 			},
 		},
 		{
+			// Blizzard game caches. Only the Cache/Logs subdirs are cleaned;
+			// game data dirs (e.g. Overwatch with seasonal/event data, settings)
+			// are left untouched so users never lose progress or config.
 			ID: "blizzard_cache", Name: "暴雪/战网缓存",
-			Description: "Blizzard 与 Battle.net 客户端缓存",
+			Description: "战网与暴雪游戏缓存（浏览器缓存/日志/错误报告，重新打开时重建；不删游戏本体与设置）",
 			Level:       LevelModerate,
 			Paths: []string{
-				la("Blizzard Entertainment"),
-				la("Battle.net"),
+				la("Battle.net", "BrowserCaches"),
+				la("Battle.net", "Cache"),
+				la("Battle.net", "Errors"),
+				la("Battle.net", "Logs"),
+				la("Battle.net", "CachedData.db"),
+				la("Blizzard Entertainment", "Telemetry"),
+			},
+		},
+		{
+			// Overwatch (and other Blizzard games) store seasonal/event data
+			// under %LOCALAPPDATA%\Blizzard Entertainment\<Game>\ as numbered
+			// folders (each patch/event adds one). We clean the numbered
+			// event-cache folders plus disposable subdirs, never game settings
+			// or the game root. Cleaned data re-downloads on next launch.
+			ID: "blizzard_game_cache", Name: "暴雪游戏活动数据（含守望先锋过往活动）",
+			Description: "守望先锋等暴雪游戏的过往活动/赛季缓存（数字文件夹，每次活动更新都会累积；删除后重新下载，游戏设置不受影响）",
+			Level:       LevelCautious,
+			Paths: []string{
+				la("Blizzard Entertainment", "Overwatch", "Cache"),
+				la("Blizzard Entertainment", "Overwatch", "Logs"),
+				la("Blizzard Entertainment", "Overwatch", "Errors"),
+				la("Blizzard Entertainment", "Overwatch", "Saved"),
+				la("Blizzard Entertainment", "Diablo IV", "Cache"),
+				la("Blizzard Entertainment", "Diablo IV", "Logs"),
+				la("Blizzard Entertainment", "World of Warcraft", "Cache"),
+				la("Blizzard Entertainment", "World of Warcraft", "Logs"),
+				la("Blizzard Entertainment", "Hearthstone", "Cache"),
+				la("Blizzard Entertainment", "Hearthstone", "Logs"),
+				la("Blizzard Entertainment", "Call of Duty", "Cache"),
+				la("Blizzard Entertainment", "Call of Duty", "Logs"),
+			},
+		},
+		{
+			ID: "game_crash_dumps", Name: "游戏崩溃转储",
+			Description: "游戏与应用崩溃时的内存转储文件（无价值，可安全删除）",
+			Level:       LevelSafe,
+			Paths: []string{
+				la("CrashDumps"),
+			},
+		},
+		{
+			ID: "steam_cache", Name: "Steam 缓存与日志",
+			Description: "Steam 客户端缓存与日志（游戏本体不受影响）",
+			Level:       LevelModerate,
+			Paths: []string{
+				filepath.Join(roamingAppData(), "Steam", "logs"),
+				filepath.Join(roamingAppData(), "Steam", "htmlcache"),
+				filepath.Join(roamingAppData(), "Steam", "config", "htmlcache"),
+				filepath.Join(roamingAppData(), "Steam", "SteamAppData", "shadercache"),
+			},
+		},
+		{
+			ID: "epic_cache", Name: "Epic 游戏缓存",
+			Description: "Epic 启动器缓存与日志（游戏本体不受影响）",
+			Level:       LevelModerate,
+			Paths: []string{
+				filepath.Join(roamingAppData(), "Epic", "EpicGamesLauncher", "Logs"),
+				la("Epic GamesLauncher", "Saved", "Logs"),
 			},
 		},
 		{
@@ -510,6 +569,37 @@ func (a *App) probeItem(item *CleanItem) {
 			s, fc := walkDirSize(p)
 			item.Size += s
 			item.FileCount += fc
+		}
+		return
+	case "blizzard_game_cache":
+		// Blizzard games (esp. Overwatch) accumulate numbered folders under
+		// %LOCALAPPDATA%\Blizzard Entertainment\<Game>\ — one per patch/event.
+		// These are event caches that re-download; settings live elsewhere.
+		// Also clean the classic Cache/Logs/Errors subdirs when present.
+		item.Exists = false
+		games := []string{"Overwatch", "Diablo IV", "World of Warcraft", "Hearthstone", "Call of Duty", "StarCraft II"}
+		for _, g := range games {
+			base := filepath.Join(localAppData(), "Blizzard Entertainment", g)
+			entries, err := os.ReadDir(base)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				// Numbered folder = event/patch cache; also known cache dirs.
+				if isNumericDirName(e.Name()) || isBlizzardDisposableDir(e.Name()) {
+					p := filepath.Join(base, e.Name())
+					s, fc := walkDirSize(p)
+					item.Exists = true
+					item.Size += s
+					item.FileCount += fc
+					if item.Drive == "" {
+						item.Drive = "C"
+					}
+				}
+			}
 		}
 		return
 	}
@@ -632,4 +722,29 @@ func programData() string {
 		return p
 	}
 	return `C:\ProgramData`
+}
+
+// isNumericDirName reports whether name consists only of digits — Blizzard
+// games use numbered folders for per-patch/per-event data (e.g. Overwatch's
+// "592095225" event cache).
+func isNumericDirName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isBlizzardDisposableDir reports whether a Blizzard game subdirectory is a
+// disposable cache/log folder (safe to clean; re-downloads/rebuilds).
+func isBlizzardDisposableDir(name string) bool {
+	switch strings.ToLower(name) {
+	case "cache", "logs", "errors", "saved", "telemetry", "crash":
+		return true
+	}
+	return false
 }
