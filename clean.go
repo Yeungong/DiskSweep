@@ -456,6 +456,38 @@ func (a *App) cleanItemDefs() []CleanItem {
 				filepath.Join(roamingAppData(), "Steam", "htmlcache"),
 				filepath.Join(roamingAppData(), "Steam", "config", "htmlcache"),
 				filepath.Join(roamingAppData(), "Steam", "SteamAppData", "shadercache"),
+				// %LOCALAPPDATA%\Steam\htmlcache is the main cache dir on modern
+				// installs (415MB on a typical gamer machine).
+				la("Steam", "htmlcache"),
+				la("Steam", "logs"),
+				la("Steam", "config", "htmlcache"),
+			},
+		},
+		{
+			ID: "riot_cache", Name: "Riot 游戏缓存（LOL/瓦罗兰特）",
+			Description: "拳头游戏客户端的日志/崩溃报告/HTTP 缓存（游戏本体与配置不受影响）",
+			Level:       LevelModerate,
+			Paths: []string{
+				la("Riot Games", "Riot Client", "Logs"),
+				la("Riot Games", "Riot Client", "Crashes"),
+				la("Riot Games", "Riot Client", "HttpCache"),
+				la("Riot Games", "League of Legends", "Logs"),
+				la("Riot Games", "League of Legends", "Crashes"),
+				la("Riot Games", "VALORANT", "Logs"),
+				la("Riot Games", "VALORANT", "Crashes"),
+				la("Riot Games", "VALORANT", "HttpCache"),
+			},
+		},
+		{
+			ID: "rockstar_cache", Name: "Rockstar 启动器缓存（GTA5）",
+			Description: "Rockstar 启动器的崩溃日志与缓存（游戏本体与存档不受影响）",
+			Level:       LevelModerate,
+			Paths: []string{
+				la("Rockstar Games", "Launcher", "CrashLogs"),
+				la("Rockstar Games", "Launcher", "Logs"),
+				la("Rockstar Games", "Launcher", "Cache"),
+				la("Rockstar Games", "Launcher", "HttpCache"),
+				la("Rockstar Games", "GTAV Enhanced", "CrashLogs"),
 			},
 		},
 		{

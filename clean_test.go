@@ -160,6 +160,8 @@ func TestNewCleanRulesCoverRealDirs(t *testing.T) {
 		{"game_crash_dumps", LevelSafe},
 		{"steam_cache", LevelModerate},
 		{"epic_cache", LevelModerate},
+		{"riot_cache", LevelModerate},
+		{"rockstar_cache", LevelModerate},
 	}
 	for _, c := range cases {
 		item, ok := defs[c.id]
