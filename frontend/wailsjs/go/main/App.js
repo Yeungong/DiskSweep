@@ -10,6 +10,10 @@ export function CleanupItems() {
   return window['go']['main']['App']['CleanupItems']();
 }
 
+export function Dependencies() {
+  return window['go']['main']['App']['Dependencies']();
+}
+
 export function ExecuteClean(arg1) {
   return window['go']['main']['App']['ExecuteClean'](arg1);
 }

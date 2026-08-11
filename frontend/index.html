@@ -48,6 +48,7 @@
         </div>
         <nav class="view-tabs">
             <button class="view-tab active" data-view="analyze" type="button">空间分析</button>
+            <button class="view-tab" data-view="deps" type="button">依赖识别</button>
             <button class="view-tab" data-view="clean" type="button">清理中心</button>
             <button class="view-tab" data-view="history" type="button">历史记录</button>
         </nav>
@@ -73,6 +74,20 @@
                 </div>
                 <div class="file-list" id="fileList">
                     <div class="empty-state">扫描后显示全盘最大的文件</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Deps view -->
+        <section class="view" id="view-deps" hidden>
+            <div class="panel">
+                <div class="panel-head">
+                    <h2>依赖识别</h2>
+                    <span class="panel-hint">自动识别本机已安装的依赖（运行时、开发工具链、本地大模型、开源软件），附中文说明。依赖识别不扫描整个磁盘，即时出结果</span>
+                </div>
+                <div class="dep-summary" id="depSummary"></div>
+                <div class="dep-list" id="depList">
+                    <div class="empty-state">正在探测本机依赖…</div>
                 </div>
             </div>
         </section>

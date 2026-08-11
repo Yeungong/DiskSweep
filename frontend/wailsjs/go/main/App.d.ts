@@ -6,6 +6,8 @@ export function CancelScan():Promise<void>;
 
 export function CleanupItems():Promise<Array<main.CleanItem>>;
 
+export function Dependencies():Promise<Array<main.DepInfo>>;
+
 export function ExecuteClean(arg1:Array<string>):Promise<Array<main.CleanResult>>;
 
 export function GetCacheLocation():Promise<main.CacheLocation>;

@@ -106,6 +106,38 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class DepInfo {
+	    id: string;
+	    name: string;
+	    category: string;
+	    desc: string;
+	    cleanable: string;
+	    cleanNote: string;
+	    paths: string[];
+	    exists: boolean;
+	    size: number;
+	    fileCount: number;
+	    drive: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DepInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.category = source["category"];
+	        this.desc = source["desc"];
+	        this.cleanable = source["cleanable"];
+	        this.cleanNote = source["cleanNote"];
+	        this.paths = source["paths"];
+	        this.exists = source["exists"];
+	        this.size = source["size"];
+	        this.fileCount = source["fileCount"];
+	        this.drive = source["drive"];
+	    }
+	}
 	export class DirChild {
 	    name: string;
 	    path: string;
@@ -114,6 +146,9 @@ export namespace main {
 	    fileCount: number;
 	    modTime: number;
 	    inaccessible: boolean;
+	    depNote?: string;
+	    depId?: string;
+	    depClean?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DirChild(source);
@@ -128,6 +163,9 @@ export namespace main {
 	        this.fileCount = source["fileCount"];
 	        this.modTime = source["modTime"];
 	        this.inaccessible = source["inaccessible"];
+	        this.depNote = source["depNote"];
+	        this.depId = source["depId"];
+	        this.depClean = source["depClean"];
 	    }
 	}
 	export class DriveInfo {

@@ -363,6 +363,114 @@ button {
     margin-bottom: 14px;
     overflow: hidden;
 }
+
+/* ---------- dependency detection ---------- */
+.dep-badge {
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 9px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    cursor: help;
+}
+.dep-keep {
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.dep-model {
+    color: #BA7517;
+    border: 1px solid color-mix(in srgb, #BA7517 45%, transparent);
+    background: color-mix(in srgb, #BA7517 8%, transparent);
+}
+.dep-partial {
+    color: var(--moderate);
+    border: 1px solid color-mix(in srgb, var(--moderate) 45%, transparent);
+    background: color-mix(in srgb, var(--moderate) 8%, transparent);
+}
+.dep-summary {
+    font-size: 13px;
+    color: var(--muted);
+    padding: 4px 2px 12px;
+}
+.dep-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius, 10px);
+    margin-bottom: 14px;
+    overflow: hidden;
+}
+.dep-block-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.dep-block .group-total { margin-left: auto; }
+.dep-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+}
+.dep-row:last-child { border-bottom: none; }
+.dep-row:hover { background: var(--surface-2); }
+.dep-info { flex: 1; min-width: 0; }
+.dep-name {
+    font-size: 13.5px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.dep-desc {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+    line-height: 1.5;
+}
+.dep-note {
+    font-size: 11.5px;
+    color: var(--moderate);
+    margin-top: 3px;
+}
+.dep-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    flex-shrink: 0;
+}
+.dep-size {
+    font-family: var(--mono, monospace);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--danger);
+}
+.dep-drive { font-size: 11px; color: var(--muted); }
+.dep-tag {
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 9px;
+    flex-shrink: 0;
+}
+.dep-tag-keep {
+    color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.dep-tag-model {
+    color: #BA7517;
+    border: 1px solid color-mix(in srgb, #BA7517 45%, transparent);
+    background: color-mix(in srgb, #BA7517 8%, transparent);
+}
+.dep-tag-partial {
+    color: var(--moderate);
+    border: 1px solid color-mix(in srgb, var(--moderate) 45%, transparent);
+    background: color-mix(in srgb, var(--moderate) 8%, transparent);
+}
 /* drive-level grouping */
 .drive-head {
     display: flex;

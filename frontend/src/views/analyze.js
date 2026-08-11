@@ -58,10 +58,22 @@ export async function render() {
         const inaccessible = c.inaccessible
             ? '<span class="row-badge" title="该目录存在但无权限读取，可能隐藏大量占用">⚠ 无权限</span>'
             : '';
+        // Dependency annotation (e.g. ".NET 运行时 · 请勿删除").
+        let depBadge = '';
+        if (c.depNote) {
+            const cls = c.depClean === 'keep'
+                ? 'dep-badge dep-keep'
+                : c.depClean === 'model'
+                    ? 'dep-badge dep-model'
+                    : 'dep-badge dep-partial';
+            const short = String(c.depNote).split(' · ')[0];
+            depBadge = `<span class="${cls}" title="${esc(c.depNote)}">🛈 ${esc(short)}</span>`;
+        }
         return `
         <div class="dir-row" data-path="${esc(c.path)}" ${c.inaccessible ? 'data-locked="1"' : ''}>
             <span class="row-icon">${isDir ? (c.inaccessible ? '🔒' : '📁') : '📄'}</span>
             <span class="row-name" title="${esc(c.path)}">${esc(c.name)}${inaccessible}</span>
+            ${depBadge}
             <span class="row-size">${c.inaccessible ? '—' : fmtBytes(c.size)}</span>
             <span class="row-count">${c.isDir && !c.inaccessible ? c.fileCount + ' 文件' : ''}</span>
             <span class="row-actions">

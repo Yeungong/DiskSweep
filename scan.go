@@ -23,6 +23,11 @@ type DirChild struct {
 	FileCount   int    `json:"fileCount"`
 	ModTime     int64  `json:"modTime"`
 	Inaccessible bool   `json:"inaccessible"` // true: dir exists but cannot be read (no permission)
+	// DepNote is a Chinese annotation when this entry is a recognized
+	// dependency (e.g. ".NET 运行时 · 请勿删除"). Empty when not matched.
+	DepNote  string `json:"depNote,omitempty"`
+	DepID    string `json:"depId,omitempty"`
+	DepClean string `json:"depClean,omitempty"` // "keep" | "partial" | "model"
 }
 
 // ScanProgress is emitted to the frontend during a scan.
@@ -145,6 +150,12 @@ func (a *App) GetDirChildren(path string) []DirChild {
 			Name:  e.Name(),
 			Path:  filepath.Join(path, e.Name()),
 			IsDir: e.IsDir(),
+		}
+		// Annotate recognized dependencies (e.g. dotnet, llama.cpp, venv).
+		if dep := a.matchDepByPath(child.Path); dep != nil {
+			child.DepID = dep.ID
+			child.DepClean = dep.Cleanable
+			child.DepNote = dep.Name + " · " + dep.CleanNote
 		}
 		if e.IsDir() {
 			if _, bad := a.scans.inaccessible.Load(child.Path); bad {

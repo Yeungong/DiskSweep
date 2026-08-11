@@ -12,6 +12,8 @@ type App struct {
 	scans    scanManager
 	topFiles topFilesCollector
 	cache    *snapshotStore
+
+	depCache []DepInfo // static dependency rule definitions (populated lazily)
 }
 
 // NewApp creates a new App application struct
@@ -25,6 +27,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.scans.emit = defaultEmit(ctx)
 	a.cache, _ = openSnapshotStore(resolveCachePath())
+	a.depCache = a.depDefs()
 }
 
 // QuitApp closes the application window and exits the process. The frontend

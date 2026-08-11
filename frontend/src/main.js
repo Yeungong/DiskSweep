@@ -8,6 +8,7 @@ import './styles/themes/vapor.css';
 import { api, onScanProgress, onScanDone } from './api';
 import { state, fmtBytes } from './state';
 import * as analyze from './views/analyze';
+import * as deps from './views/deps';
 import * as clean from './views/clean';
 import * as history from './views/history';
 
@@ -220,9 +221,11 @@ function initViews() {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b === btn));
             document.getElementById('view-analyze').hidden = btn.dataset.view !== 'analyze';
+            document.getElementById('view-deps').hidden = btn.dataset.view !== 'deps';
             document.getElementById('view-clean').hidden = btn.dataset.view !== 'clean';
             document.getElementById('view-history').hidden = btn.dataset.view !== 'history';
             if (btn.dataset.view === 'history') history.refresh();
+            if (btn.dataset.view === 'deps') deps.refresh();
         }));
 }
 
@@ -409,6 +412,9 @@ async function boot() {
 
     analyze.render();
     clean.refresh();
+
+    // Preload dependency detection in the background (non-blocking).
+    deps.refresh().catch(() => { /* deps are optional */ });
 }
 
 boot();

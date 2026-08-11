@@ -20,6 +20,8 @@ export const api = {
     getCleanHistory: () => App.GetCleanHistory(),
     restoreHistory: (id) => App.RestoreHistory(id),
 
+    dependencies: () => App.Dependencies(),
+
     recyclePath: (p) => App.RecyclePath(p),
     openInExplorer: (p) => App.OpenInExplorer(p),
 

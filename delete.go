@@ -550,10 +550,18 @@ func (a *App) moveDirToRecycleBin(p string) (int64, error) {
 }
 
 // RecyclePath moves a single file or directory to the recycle bin. Used by the
-// analyze view for individual large files.
+// analyze view for individual large files. Recognized dependencies that must
+// be kept are rejected to prevent accidental deletion of runtime/model files.
 func (a *App) RecyclePath(path string) error {
+	if dep := a.matchDepByPath(path); dep != nil && dep.Cleanable == DepKeep {
+		return errDepProtected
+	}
 	return moveToRecycleBin(path)
 }
+
+// errDepProtected is returned when a user tries to recycle a protected
+// dependency (e.g. a .NET runtime or VC++ library that software depends on).
+var errDepProtected = errString("该路径是系统依赖（请勿删除），已阻止操作")
 
 // OpenInExplorer opens Windows Explorer with the given path selected.
 func (a *App) OpenInExplorer(path string) error {
