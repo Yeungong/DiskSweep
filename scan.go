@@ -379,6 +379,10 @@ func (a *App) saveSnapshot(root string) {
 		// Cache is a convenience; ignore save errors.
 		return
 	}
+	// Record today's drive-usage snapshot for the disk-trend view.
+	if drives := a.GetDrives(); len(drives) > 0 {
+		_ = a.cache.recordDiskSnapshot(drives, sizes, time.Now())
+	}
 }
 
 // pathDepth counts path separators (Windows style).

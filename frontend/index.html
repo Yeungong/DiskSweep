@@ -48,6 +48,7 @@
         </div>
         <nav class="view-tabs">
             <button class="view-tab active" data-view="analyze" type="button">空间分析</button>
+            <button class="view-tab" data-view="trend" type="button">空间趋势</button>
             <button class="view-tab" data-view="deps" type="button">依赖识别</button>
             <button class="view-tab" data-view="clean" type="button">清理中心</button>
             <button class="view-tab" data-view="history" type="button">历史记录</button>
@@ -74,6 +75,37 @@
                 </div>
                 <div class="file-list" id="fileList">
                     <div class="empty-state">扫描后显示全盘最大的文件</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Trend view -->
+        <section class="view" id="view-trend" hidden>
+            <div class="panel">
+                <div class="panel-head">
+                    <h2>空间趋势</h2>
+                    <span class="panel-hint" id="trendHint">每次扫描自动记录当日磁盘剩余空间；数据随时间积累</span>
+                </div>
+                <div class="trend-chart-wrap">
+                    <canvas id="trendChart"></canvas>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-head">
+                    <h2>最近变化明细</h2>
+                    <span class="panel-hint" id="deltaHint">最近两次扫描之间，哪些目录的空间变化最大</span>
+                </div>
+                <div class="file-list" id="deltaList">
+                    <div class="empty-state">需要至少两次不同日期的扫描才能对比</div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-head">
+                    <h2>重复软件检测</h2>
+                    <span class="panel-hint">注册表中同名/同系列的已安装软件（部分为多版本并存，可自行判断是否卸载旧版）</span>
+                </div>
+                <div class="dep-list" id="dupAppList">
+                    <div class="empty-state">正在检测…</div>
                 </div>
             </div>
         </section>

@@ -9,6 +9,7 @@ import { api, onScanProgress, onScanDone } from './api';
 import { state, fmtBytes } from './state';
 import * as analyze from './views/analyze';
 import * as deps from './views/deps';
+import * as trend from './views/trend';
 import * as clean from './views/clean';
 import * as history from './views/history';
 
@@ -211,7 +212,16 @@ function initScan() {
             state.drives = await api.getDrives();
             renderDriveTabs();
         } catch (_) { /* non-fatal */ }
+
+        // Trend view gained a new snapshot after this scan.
+        trendCacheInvalidate();
     });
+}
+
+// trendCacheInvalidate drops the cached trend payload so the next open of the
+// trend tab re-fetches (it now includes today's new snapshot).
+function trendCacheInvalidate() {
+    if (typeof trend !== 'undefined' && trend.invalidate) trend.invalidate();
 }
 
 // ---------- view switching ----------
@@ -221,11 +231,13 @@ function initViews() {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b === btn));
             document.getElementById('view-analyze').hidden = btn.dataset.view !== 'analyze';
+            document.getElementById('view-trend').hidden = btn.dataset.view !== 'trend';
             document.getElementById('view-deps').hidden = btn.dataset.view !== 'deps';
             document.getElementById('view-clean').hidden = btn.dataset.view !== 'clean';
             document.getElementById('view-history').hidden = btn.dataset.view !== 'history';
             if (btn.dataset.view === 'history') history.refresh();
             if (btn.dataset.view === 'deps') deps.refresh();
+            if (btn.dataset.view === 'trend') trend.refresh();
         }));
 }
 

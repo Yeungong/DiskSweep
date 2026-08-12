@@ -8,6 +8,10 @@ export function CleanupItems():Promise<Array<main.CleanItem>>;
 
 export function Dependencies():Promise<Array<main.DepInfo>>;
 
+export function DiskTrend(arg1:string):Promise<main.DiskTrendResult>;
+
+export function DuplicateApps():Promise<Array<main.DuplicateGroup>>;
+
 export function ExecuteClean(arg1:Array<string>):Promise<Array<main.CleanResult>>;
 
 export function GetCacheLocation():Promise<main.CacheLocation>;

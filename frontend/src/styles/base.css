@@ -364,6 +364,18 @@ button {
     overflow: hidden;
 }
 
+/* ---------- trend view ---------- */
+.trend-chart-wrap {
+    padding: 8px 4px 0;
+}
+.trend-chart-wrap svg {
+    background: var(--surface);
+}
+.delta-row { cursor: default; }
+.delta-grew .row-size { color: var(--danger); font-weight: 700; }
+.delta-shrunk .row-size { color: #2ecc71; font-weight: 700; }
+.delta-row .row-name { font-family: var(--mono, monospace); font-size: 12px; }
+
 /* ---------- dependency detection ---------- */
 .dep-badge {
     font-size: 10px;

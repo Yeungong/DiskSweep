@@ -14,6 +14,14 @@ export function Dependencies() {
   return window['go']['main']['App']['Dependencies']();
 }
 
+export function DiskTrend(arg1) {
+  return window['go']['main']['App']['DiskTrend'](arg1);
+}
+
+export function DuplicateApps() {
+  return window['go']['main']['App']['DuplicateApps']();
+}
+
 export function ExecuteClean(arg1) {
   return window['go']['main']['App']['ExecuteClean'](arg1);
 }

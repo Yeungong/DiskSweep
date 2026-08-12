@@ -21,6 +21,8 @@ export const api = {
     restoreHistory: (id) => App.RestoreHistory(id),
 
     dependencies: () => App.Dependencies(),
+    diskTrend: (drive) => App.DiskTrend(drive),
+    duplicateApps: () => App.DuplicateApps(),
 
     recyclePath: (p) => App.RecyclePath(p),
     openInExplorer: (p) => App.OpenInExplorer(p),
