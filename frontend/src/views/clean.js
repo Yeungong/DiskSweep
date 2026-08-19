@@ -189,10 +189,16 @@ async function runClean(ids) {
     btn.disabled = true;
     log(`开始清理 ${ids.length} 项…`, 'warn');
 
+    // Show progress immediately (indeterminate until the first event lands)
+    // so fast cleanups still give visible feedback.
+    const startedAt = Date.now();
+    window.progressApi?.showProgress(0, `正在清理 ${ids.length} 项…`, 'indeterminate');
+
     let results;
     try {
         results = await api.executeClean(ids);
     } catch (e) {
+        window.progressApi?.hideProgress();
         log('清理请求失败: ' + e, 'err');
         btn.disabled = false;
         return;
@@ -212,6 +218,13 @@ async function runClean(ids) {
     log(`清理完成，共移入回收站 ${fmtBytes(freed)}`, 'ok');
     toast(`已移入回收站 ${fmtBytes(freed)}，可在历史记录中恢复`, 'ok');
     btn.disabled = false;
+
+    // Hold the "100% done" state for at least ~900ms so the completion is
+    // visible even for near-instant cleanups.
+    window.progressApi?.showProgress(100, `清理完成 ${ids.length} 项 · 共释放 ${fmtBytes(freed)}`);
+    const elapsed = Date.now() - startedAt;
+    const hold = Math.max(0, 900 - elapsed);
+    setTimeout(() => window.progressApi?.hideProgress(), hold);
 
     // Refresh items, analyze view, history and drive info.
     refresh();

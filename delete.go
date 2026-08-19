@@ -36,25 +36,54 @@ type CleanResult struct {
 
 // ExecuteClean runs the cleanup for the given item IDs and returns per-item
 // results. Every deletion moves files to the recycle bin (reversible) instead
-// of permanently deleting them.
+// of permanently deleting them. Progress is emitted per item via
+// "clean:progress" so the frontend can show a step bar.
 func (a *App) ExecuteClean(itemIDs []string) []CleanResult {
 	byID := map[string]CleanItem{}
 	for _, d := range a.cleanItemDefs() {
 		byID[d.ID] = d
 	}
 	results := make([]CleanResult, 0, len(itemIDs))
-	for _, id := range itemIDs {
+	for i, id := range itemIDs {
 		item, ok := byID[id]
 		if !ok {
 			results = append(results, CleanResult{
 				ID: id, Name: id, OK: false,
 				Errors: []PathError{{Kind: ErrOther, Error: "未知清理项"}},
 			})
+			a.emitCleanProgress(i+1, len(itemIDs), id, id, 0)
 			continue
 		}
+		// Announce the item about to run.
+		a.emitCleanProgress(i, len(itemIDs), item.ID, item.Name, 0)
 		results = append(results, a.executeItem(item))
+		a.emitCleanProgress(i+1, len(itemIDs), item.ID, item.Name, results[len(results)-1].Freed)
 	}
+	a.emitCleanProgress(len(itemIDs), len(itemIDs), "", "完成", 0)
 	return results
+}
+
+// emitCleanProgress forwards a cleanup step to the frontend.
+func (a *App) emitCleanProgress(done, total int, id, name string, freed int64) {
+	if a.scans.emit == nil {
+		return
+	}
+	a.scans.emit("clean:progress", CleanProgress{
+		Done:  done,
+		Total: total,
+		ItemID: id,
+		ItemName: name,
+		Freed: freed,
+	})
+}
+
+// CleanProgress is emitted during a cleanup batch (one event per item).
+type CleanProgress struct {
+	Done     int    `json:"done"`
+	Total    int    `json:"total"`
+	ItemID   string `json:"itemId,omitempty"`
+	ItemName string `json:"itemName,omitempty"`
+	Freed    int64  `json:"freed"`
 }
 
 func (a *App) executeItem(item CleanItem) CleanResult {

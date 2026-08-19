@@ -5,7 +5,7 @@ import './styles/themes/glass.css';
 import './styles/themes/cyber.css';
 import './styles/themes/vapor.css';
 
-import { api, onScanProgress, onScanDone } from './api';
+import { api, onScanProgress, onScanDone, onCleanProgress } from './api';
 import { state, fmtBytes } from './state';
 import * as analyze from './views/analyze';
 import * as deps from './views/deps';
@@ -145,6 +145,36 @@ function switchDrive(drive) {
     clean.refresh();
 }
 
+// ---------- global progress bar ----------
+// Shared by scan (percent), clean (step x/n) and restore (indeterminate).
+const progressEl = {
+    box: () => document.getElementById('globalProgress'),
+    fill: () => document.getElementById('progressFill'),
+    text: () => document.getElementById('progressText'),
+};
+
+// showProgress(pct, text, {mode}) — mode 'indeterminate' shows an animated bar.
+function showProgress(pct, text, mode = '') {
+    const box = progressEl.box();
+    box.hidden = false;
+    const fill = progressEl.fill();
+    if (mode === 'indeterminate') {
+        fill.style.width = '';
+        fill.classList.add('progress-indeterminate');
+    } else {
+        fill.classList.remove('progress-indeterminate');
+        fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    }
+    progressEl.text().textContent = text || '';
+}
+
+function hideProgress() {
+    progressEl.box().hidden = true;
+}
+
+// Expose for other view modules (e.g. history restore flow).
+window.progressApi = { showProgress, hideProgress };
+
 // ---------- scan ----------
 
 function setScanning(on) {
@@ -181,14 +211,17 @@ function initScan() {
         const status = document.getElementById('scanStatus');
         if (p.phase === 'enumerate') {
             status.textContent = `枚举目录… 共 ${p.dirsTotal} 个目录`;
+            showProgress(5, `正在枚举目录… 共 ${p.dirsTotal} 个`, 'indeterminate');
         } else {
             const pct = p.dirsTotal ? Math.round(p.dirsDone / p.dirsTotal * 100) : 0;
             status.textContent = `扫描中… ${pct}%（${p.dirsDone}/${p.dirsTotal} 目录 · ${fmtBytes(p.bytes)}）`;
+            showProgress(pct, `扫描中… ${pct}% · ${p.dirsDone}/${p.dirsTotal} 目录 · ${fmtBytes(p.bytes)}`);
         }
     });
 
     onScanDone(async (summary) => {
         setScanning(false);
+        hideProgress();
         state.scanSummary = summary;
         if (summary.cancelled) {
             document.getElementById('scanStatus').textContent = '扫描已取消';
@@ -215,6 +248,14 @@ function initScan() {
 
         // Trend view gained a new snapshot after this scan.
         trendCacheInvalidate();
+    });
+
+    // Cleanup step progress (per item). Final "完成" sentinel is ignored here;
+    // clean.js's runClean owns the completion state (min hold time).
+    onCleanProgress((p) => {
+        if (!p.total || p.itemName === '完成') return;
+        const pct = Math.round(p.done / p.total * 100);
+        showProgress(pct, `清理中… 第 ${p.done}/${p.total} 项：${p.itemName}`);
     });
 }
 
@@ -392,6 +433,22 @@ export async function refreshDrives() {
 }
 
 async function boot() {
+    // Diagnostic: surface any startup error in the status bar so we can see
+    // why the UI may fail to initialize.
+    window.addEventListener('error', (e) => {
+        const s = document.getElementById('scanStatus');
+        if (s) s.textContent = '⚠ 页面错误: ' + e.message;
+    });
+    try {
+        await bootInner();
+    } catch (e) {
+        const s = document.getElementById('scanStatus');
+        if (s) s.textContent = '⚠ 启动失败: ' + e.message + ' ' + (e.stack || '').split('\n')[1];
+        console.error('boot failed:', e);
+    }
+}
+
+async function bootInner() {
     initTheme();
     await initAdmin();
     initElevate();

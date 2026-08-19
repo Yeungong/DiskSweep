@@ -65,8 +65,12 @@ export async function refresh() {
             const row = btn.closest('.history-row');
             const id = Number(row.dataset.id);
             btn.disabled = true;
+            // Show indeterminate progress so the user knows it's working
+            // (restore is a same-volume move, normally instant — no window).
+            window.progressApi?.showProgress(0, '正在从回收站恢复…', 'indeterminate');
             try {
                 const res = await api.restoreHistory(id);
+                window.progressApi?.hideProgress();
                 if (res.ok) {
                     toast('已恢复到原位置', 'ok');
                 } else {
@@ -74,6 +78,7 @@ export async function refresh() {
                 }
                 refresh();
             } catch (e) {
+                window.progressApi?.hideProgress();
                 toast('恢复请求失败: ' + e, 'err');
                 btn.disabled = false;
             }

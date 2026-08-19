@@ -1,11 +1,25 @@
 package main
 
 import (
+	"encoding/binary"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
+
+// joinPath is filepath.Join (kept as a helper so the restore logic reads
+// clearly and is easy to unit test against path cases).
+func joinPath(elem ...string) string { return filepath.Join(elem...) }
+
+// dirName is filepath.Dir with an empty-string guard (returns "" for empty).
+func dirName(p string) string {
+	if p == "" {
+		return ""
+	}
+	return filepath.Dir(p)
+}
 
 // HistoryEntry records one path moved to the recycle bin by a cleanup.
 type HistoryEntry struct {
@@ -110,40 +124,120 @@ func (a *App) RestoreHistory(id int64) RestoreResult {
 }
 
 // restoreFromRecycleBin finds the item in the recycle bin whose original path
-// matches target and invokes its "restore" verb (localized), via PowerShell.
-// The recycle-bin item's Path property is the internal physical path; the
-// original location comes from System.Recycle.DeletedFrom + Name.
+// matches target and silently moves it back to its original location.
+//
+// Instead of invoking the shell "restore" verb (which pops a blue explorer
+// progress dialog), we parse the recycle-bin $I metadata files directly to
+// find the physical $R file, then move it back with os.Rename (same-volume
+// rename, instant, no window).
 func restoreFromRecycleBin(target string) error {
-	escaped := strings.ReplaceAll(target, "'", "''")
-	ps := `
-$shell = New-Object -ComObject Shell.Application
-$rb = $shell.NameSpace(0x0a)
-$target = '` + escaped + `'
-foreach ($item in $rb.Items()) {
-  $del = $item.ExtendedProperty('System.Recycle.DeletedFrom')
-  if ($del -and ((Join-Path $del $item.Name) -eq $target)) {
-    foreach ($v in $item.Verbs()) {
-      if ($v.Name -match '还原|restore') { $v.DoIt(); exit 0 }
-    }
-    exit 2
-  }
-}
-exit 1
-`
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = out
-		code := cmd.ProcessState.ExitCode()
-		switch code {
-		case 1:
-			return errNotInRecycleBin
-		case 2:
-			return errNoRestoreVerb
-		default:
-			return err
+	// Windows stores the original path in $I* metadata next to the $R* data.
+	// We search every drive's $Recycle.Bin\<SID> folder.
+	for _, root := range recycleRoots() {
+		infos, err := os.ReadDir(root)
+		if err != nil {
+			continue // drive absent or no permission
+		}
+		for _, sid := range infos {
+			if !sid.IsDir() {
+				continue
+			}
+			bin := joinPath(root, sid.Name())
+			err := restoreFromRecycleDir(bin, target)
+			if err == nil {
+				return nil // restored
+			}
+			if err != errNotInRecycleBin {
+				return err
+			}
 		}
 	}
-	return nil
+	return errNotInRecycleBin
+}
+
+// recycleRoots returns the $Recycle.Bin root of every present fixed drive.
+func recycleRoots() []string {
+	roots := []string{}
+	for _, d := range listFixedDrives() {
+		roots = append(roots, d+`\$Recycle.Bin`)
+	}
+	return roots
+}
+
+// listFixedDrives returns drive letters (e.g. "C:") of all present drives by
+// probing for the drive root directory.
+func listFixedDrives() []string {
+	out := []string{}
+	for letter := 'A'; letter <= 'Z'; letter++ {
+		root := string(letter) + `:\`
+		if _, err := os.Stat(root); err == nil {
+			out = append(out, string(letter)+":")
+		}
+	}
+	return out
+}
+
+// restoreFromRecycleDir scans one $Recycle.Bin\<SID> directory for the entry
+// whose original path equals target, then moves its $R file back.
+func restoreFromRecycleDir(bin, target string) error {
+	entries, err := os.ReadDir(bin)
+	if err != nil {
+		return errNotInRecycleBin
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if len(name) < 2 || name[0] != '$' || (name[1] != 'I' && name[1] != 'i') {
+			continue
+		}
+		metaPath := joinPath(bin, name)
+		orig, _, err := parseRecycleMeta(metaPath)
+		if err != nil || !strings.EqualFold(orig, target) {
+			continue
+		}
+		// Found: the data file is $R + the same suffix.
+		dataName := "$R" + name[2:]
+		dataPath := joinPath(bin, dataName)
+		if _, err := os.Stat(dataPath); err != nil {
+			return errNoRestoreVerb // metadata without data (shouldn't happen)
+		}
+		// Ensure the destination directory exists, then rename back.
+		dir := dirName(target)
+		if dir != "" {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return err
+			}
+		}
+		if err := os.Rename(dataPath, target); err != nil {
+			return err
+		}
+		// Remove the metadata file (the recycle-bin entry is gone).
+		_ = os.Remove(metaPath)
+		return nil
+	}
+	return errNotInRecycleBin
+}
+
+// parseRecycleMeta reads a $I metadata file and returns the original path and
+// file size. Win10 format: 8-byte magic, 8-byte size, 8-byte FILETIME,
+// 4-byte path length, then UTF-16LE original path.
+func parseRecycleMeta(path string) (string, int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", 0, err
+	}
+	if len(data) < 28 {
+		return "", 0, errString("回收站元数据格式异常")
+	}
+	size := int64(binary.LittleEndian.Uint64(data[8:16]))
+	u := make([]uint16, 0, 512)
+	for i := 28; i+1 < len(data); i += 2 {
+		c := binary.LittleEndian.Uint16(data[i : i+2])
+		if c == 0 {
+			break
+		}
+		u = append(u, c)
+	}
+	return string(utf16.Decode(u)), size, nil
 }
 
 var (

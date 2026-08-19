@@ -42,3 +42,7 @@ export function onScanProgress(cb) {
 export function onScanDone(cb) {
     EventsOn('scan:done', cb);
 }
+
+export function onCleanProgress(cb) {
+    EventsOn('clean:progress', cb);
+}
