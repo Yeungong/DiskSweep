@@ -23,7 +23,7 @@ func waitScan(a *App, t *testing.T) {
 
 func buildTree(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := tmpDir(t)
 	mk := func(rel string, size int) {
 		p := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -101,7 +101,7 @@ func TestScanSizesAndChildren(t *testing.T) {
 }
 
 func TestScanSymlinkNotFollowed(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	// Create a target dir with a big file.
 	target := filepath.Join(root, "target")
 	if err := os.MkdirAll(target, 0o755); err != nil {
@@ -142,7 +142,7 @@ func TestScanMissingDirDoesNotCrash(t *testing.T) {
 	a := &App{}
 	a.scans.emit = func(string, interface{}) {}
 
-	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	missing := filepath.Join(tmpDir(t), "does-not-exist")
 	if err := a.StartScan(missing, 100); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestScanMissingDirDoesNotCrash(t *testing.T) {
 // icacls and verifies the scan completes without crashing and without
 // over-counting the blocked subtree.
 func TestScanAccessDeniedDirDoesNotCrash(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	blocked := filepath.Join(root, "blocked")
 	if err := os.MkdirAll(blocked, 0o755); err != nil {
 		t.Fatal(err)

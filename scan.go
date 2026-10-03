@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -181,15 +180,145 @@ func (a *App) GetDirChildren(path string) []DirChild {
 
 func (a *App) runScan(root string) {
 	start := time.Now()
-	dirs := a.enumerateDirs(root)
+	// One concurrent pass does both jobs: it walks the tree (enumerate) and
+	// records each directory's direct-file sizes as it goes. The old code
+	// walked the tree twice — once to enumerate, once to stat — which meant
+	// paying the whole directory-read cost twice, and the first pass was
+	// serial while the fastest part (small cache dirs) waits on it.
+	dirs := a.walkAndScan(root)
 	if a.scans.cancel.Load() {
 		a.finishScan(false, true, root, start)
 		return
 	}
-	a.scanDirs(dirs)
 	a.aggregateSizes(dirs)
 	cancelled := a.scans.cancel.Load()
 	a.finishScan(!cancelled, cancelled, root, start)
+}
+
+// walkAndScan enumerates every directory under root and records each one's
+// direct-file size in a single concurrent traversal.
+//
+// This is the scan's hot path. The old scanner walked the tree twice — once
+// to enumerate directories, once to stat their files — paying the whole
+// directory-read cost twice, and the enumerate pass was serial so the actual
+// file work could not start until it finished.
+//
+// Concurrency model: a semaphore bounds how many workers may be inside the
+// traversal at once. A worker that finds subdirectories spawns a goroutine per
+// subdirectory and waits for them; because the wait happens *after* releasing
+// nothing and the semaphore is acquired before spawning, a deep tree simply
+// runs with fewer concurrent workers rather than deadlocking. Only directory
+// counts are mutex-protected (one lock per directory, versus one per file).
+func (a *App) walkAndScan(root string) []string {
+	workers := runtime.NumCPU() * 2
+	if workers > 32 {
+		workers = 32
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	sem := make(chan struct{}, workers)
+
+	var (
+		mu      sync.Mutex
+		dirs    []string
+		scanned int64
+	)
+	localHeap := newLocalTopFiles(a.topFiles.limitOr())
+
+	var walk func(dir string)
+	walk = func(dir string) {
+		if a.scans.cancel.Load() {
+			return
+		}
+
+		var size int64
+		var files int
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			atomic.AddInt64(&a.scans.errs, 1)
+			a.scans.inaccessible.Store(dir, struct{}{})
+			a.scans.sizeMap.Store(dir, dirInfo{0, 0})
+			mu.Lock()
+			dirs = append(dirs, dir)
+			mu.Unlock()
+			return
+		}
+
+		subdirs := make([]string, 0, 8)
+		for _, e := range entries {
+			if e.IsDir() {
+				subdirs = append(subdirs, filepath.Join(dir, e.Name()))
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				atomic.AddInt64(&a.scans.errs, 1)
+				continue
+			}
+			size += info.Size()
+			files++
+			localHeap.add(filepath.Join(dir, e.Name()), info.Size(), info.ModTime().Unix())
+		}
+		atomic.AddInt64(&a.scans.files, int64(files))
+		atomic.AddInt64(&a.scans.bytes, size)
+		a.scans.sizeMap.Store(dir, dirInfo{size, files})
+
+		mu.Lock()
+		dirs = append(dirs, dir)
+		mu.Unlock()
+
+		done := atomic.AddInt64(&scanned, 1)
+		if done%200 == 0 || done == 1 {
+			mu.Lock()
+			total := len(dirs)
+			mu.Unlock()
+			a.scans.emit("scan:progress", ScanProgress{
+				Phase:     "scan",
+				DirsTotal: total,
+				DirsDone:  int(done),
+				Files:     a.scans.files,
+				Bytes:     a.scans.bytes,
+			})
+		}
+
+		if len(subdirs) == 0 {
+			return
+		}
+
+		// Fan out over subdirectories. We take a slot for each child before
+		// spawning; when the pool is saturated we walk the child inline on
+		// this goroutine, which keeps the traversal making progress without
+		// ever blocking on a full channel.
+		var wg sync.WaitGroup
+		for _, sd := range subdirs {
+			select {
+			case sem <- struct{}{}:
+				wg.Add(1)
+				go func(child string) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					walk(child)
+				}(sd)
+			default:
+				walk(sd) // inline: pool is full
+			}
+		}
+		wg.Wait()
+	}
+
+	walk(root)
+
+	mu.Lock()
+	out := dirs
+	mu.Unlock()
+
+	a.topFiles.merge(localHeap)
+	a.scans.mu.Lock()
+	a.scans.dirsTotal = len(out)
+	a.scans.dirsDone = int64(len(out))
+	a.scans.mu.Unlock()
+	return out
 }
 
 // enumerateDirs walks the tree collecting every directory path (BFS via stack).
@@ -309,27 +438,59 @@ func (a *App) collectTopFile(path string, info os.FileInfo) {
 // aggregateSizes bubbles child directory sizes up into their parents. Dirs are
 // processed deepest-first so a parent's children are final before it is
 // aggregated.
+//
+// Ordering uses a bucket sort by path depth instead of sort.Slice: on a tree
+// with tens of thousands of directories the comparison sort (plus a pathDepth
+// scan per comparison) was pure overhead, while bucketing is a single O(n)
+// pass. Path depth is monotonic with the dependency order we need — a child is
+// always one level deeper than its parent — so processing buckets from deepest
+// to shallowest is equivalent and does not depend on the order walkAndScan
+// happened to append directories in.
 func (a *App) aggregateSizes(dirs []string) {
-	sorted := make([]string, len(dirs))
-	copy(sorted, dirs)
-	sort.Slice(sorted, func(i, j int) bool {
-		return pathDepth(sorted[i]) > pathDepth(sorted[j])
-	})
-	for _, d := range sorted {
-		v, ok := a.scans.sizeMap.Load(d)
-		if !ok {
-			continue
-		}
-		di := v.(dirInfo)
-		parent := filepath.Dir(d)
-		if parent == d {
-			continue // drive root
-		}
-		if pv, ok := a.scans.sizeMap.Load(parent); ok {
-			pi := pv.(dirInfo)
-			a.scans.sizeMap.Store(parent, dirInfo{pi.size + di.size, pi.fileCount + di.fileCount})
+	if len(dirs) == 0 {
+		return
+	}
+	maxDepth := 0
+	depths := make([]int, len(dirs))
+	for i, d := range dirs {
+		depth := stringDepth(d)
+		depths[i] = depth
+		if depth > maxDepth {
+			maxDepth = depth
 		}
 	}
+	buckets := make([][]string, maxDepth+1)
+	for i, d := range dirs {
+		buckets[depths[i]] = append(buckets[depths[i]], d)
+	}
+	for depth := maxDepth; depth >= 0; depth-- {
+		for _, d := range buckets[depth] {
+			v, ok := a.scans.sizeMap.Load(d)
+			if !ok {
+				continue
+			}
+			di := v.(dirInfo)
+			parent := filepath.Dir(d)
+			if parent == d {
+				continue // drive root
+			}
+			if pv, ok := a.scans.sizeMap.Load(parent); ok {
+				pi := pv.(dirInfo)
+				a.scans.sizeMap.Store(parent, dirInfo{pi.size + di.size, pi.fileCount + di.fileCount})
+			}
+		}
+	}
+}
+
+// stringDepth is pathDepth with the trailing-separator quirk removed: Windows
+// roots like "C:\" carry the same depth as "C:" so a root still sorts above
+// its children.
+func stringDepth(p string) int {
+	n := pathDepth(p)
+	if n > 0 && (p[len(p)-1] == '\\' || p[len(p)-1] == '/') {
+		n--
+	}
+	return n
 }
 
 func (a *App) finishScan(ok, cancelled bool, root string, start time.Time) {

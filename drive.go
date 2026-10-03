@@ -12,7 +12,9 @@ type DriveInfo struct {
 	Free  uint64 `json:"free"`
 }
 
-// GetDrives returns space info for all present fixed drives (A: through Z:).
+// GetDrives returns space info for every ready drive (A: through Z:). Drives
+// that are absent, not ready, or report zero capacity are skipped, which also
+// filters empty card readers and unattached network shares.
 func (a *App) GetDrives() []DriveInfo {
 	drives := []DriveInfo{}
 	for letter := 'A'; letter <= 'Z'; letter++ {

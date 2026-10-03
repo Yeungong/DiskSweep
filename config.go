@@ -126,38 +126,81 @@ func (a *App) switchCache(targetDir string) (CacheLocation, error) {
 		target = filepath.Join(targetDir, "cache.db")
 	}
 
-	// Close the current store to release the db lock before copying.
+	// Close the current store to release the db lock before copying anything.
 	if a.cache != nil {
 		a.cache.close()
 		a.cache = nil
 	}
 
-	// Migrate data only when the target has no db yet.
-	if target != old {
-		if _, err := os.Stat(target); os.IsNotExist(err) {
-			if src, err := os.Open(old); err == nil {
-				dst, err := os.Create(target)
-				if err == nil {
-					_, _ = dst.ReadFrom(src)
-					_ = dst.Close()
-				}
-				_ = src.Close()
-			}
+	// Every failure path below reopens the previous store. Returning an error
+	// with a.cache left nil would silently disable history and snapshots for the
+	// rest of the session, and the UI gives no hint that anything went wrong.
+	keepOldStore := func() {
+		if a.cache == nil {
+			a.cache, _ = openSnapshotStore(old)
 		}
 	}
 
+	if target != old {
+		if err := migrateCacheDB(old, target); err != nil {
+			keepOldStore()
+			return CacheLocation{}, err
+		}
+	}
+
+	store, err := openSnapshotStore(target)
+	if err != nil {
+		keepOldStore()
+		return CacheLocation{}, err
+	}
+	a.cache = store
+
+	// The config is written last: it is the record of which database to use, so
+	// it must not point at a location we failed to open.
 	cfg := loadConfig()
 	cfg.CacheDir = targetDir
 	if err := saveConfig(cfg); err != nil {
 		return CacheLocation{}, err
 	}
-
-	store, err := openSnapshotStore(target)
-	if err != nil {
-		return CacheLocation{}, err
-	}
-	a.cache = store
 	return a.GetCacheLocation(), nil
+}
+
+// migrateCacheDB copies the existing database to target when target has none
+// yet. It is a no-op when there is nothing to migrate.
+//
+// The copy lands at a temporary name and is renamed into place only once it has
+// been written and closed successfully. A truncated database left at the real
+// path would be indistinguishable from a valid one until SQLite refused to open
+// it, and the user would have no idea why their history vanished.
+func migrateCacheDB(oldPath, target string) error {
+	if _, err := os.Stat(target); err == nil || !os.IsNotExist(err) {
+		return nil // target already has a db (or cannot be inspected)
+	}
+	src, err := os.Open(oldPath)
+	if err != nil {
+		return nil // nothing to migrate (first run)
+	}
+	defer src.Close()
+
+	tmp := target + ".migrating"
+	dst, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := dst.ReadFrom(src); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // PickDirectory opens a native folder picker and returns the chosen directory

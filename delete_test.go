@@ -31,7 +31,7 @@ func TestMatchesName(t *testing.T) {
 }
 
 func TestDeleteFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := tmpDir(t)
 	// normal file
 	p := filepath.Join(dir, "f.bin")
 	if err := os.WriteFile(p, make([]byte, 123), 0o644); err != nil {
@@ -58,7 +58,7 @@ func TestDeleteFile(t *testing.T) {
 }
 
 func TestDeleteDirContents(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	sub := filepath.Join(root, "sub")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestDeleteDirContents(t *testing.T) {
 }
 
 func TestDeleteDirContentsGlobAndAge(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	mk := func(rel string, size int) {
 		if err := os.WriteFile(filepath.Join(root, rel), make([]byte, size), 0o644); err != nil {
 			t.Fatal(err)
@@ -120,7 +120,7 @@ func TestDeleteDirContentsGlobAndAge(t *testing.T) {
 }
 
 func TestExecuteItemPermanent(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	dir := filepath.Join(root, "cache")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestClassifyErrors(t *testing.T) {
 // removal fails with a sharing violation, then verifies the delete path
 // reports it as a locked error instead of crashing.
 func TestDeleteLockedFileReportsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := tmpDir(t)
 	p := filepath.Join(dir, "held.bin")
 	if err := os.WriteFile(p, make([]byte, 42), 0o644); err != nil {
 		t.Fatal(err)
@@ -215,8 +215,14 @@ func TestDeleteLockedFileReportsError(t *testing.T) {
 
 // TestMoveToRecycleBin verifies cautious-path deletion moves a file to the
 // recycle bin (reversible). Skipped if the environment cannot do it.
+//
+// Gated: SHFileOperationW needs a message pump, which a headless test process
+// does not have (see TestRecycleBatchPartialLocked).
 func TestMoveToRecycleBin(t *testing.T) {
-	dir := t.TempDir()
+	if os.Getenv("DS_SHELL_TESTS") != "1" {
+		t.Skip("set DS_SHELL_TESTS=1 to run tests that drive the shell recycle bin")
+	}
+	dir := tmpDir(t)
 	p := filepath.Join(dir, "trash.bin")
 	if err := os.WriteFile(p, make([]byte, 33), 0o644); err != nil {
 		t.Fatal(err)
@@ -232,8 +238,13 @@ func TestMoveToRecycleBin(t *testing.T) {
 
 // TestExecuteItemCautiousToRecycleBin verifies cautious items are moved to the
 // recycle bin (not permanently deleted).
+//
+// Gated for the same reason as TestMoveToRecycleBin.
 func TestExecuteItemCautiousToRecycleBin(t *testing.T) {
-	root := t.TempDir()
+	if os.Getenv("DS_SHELL_TESTS") != "1" {
+		t.Skip("set DS_SHELL_TESTS=1 to run tests that drive the shell recycle bin")
+	}
+	root := tmpDir(t)
 	dir := filepath.Join(root, "agent-data")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

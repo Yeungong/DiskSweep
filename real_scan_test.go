@@ -90,7 +90,7 @@ func TestAIToolRulesDetected(t *testing.T) {
 	}
 }
 func TestEndToEndCleanCycle(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	junk := filepath.Join(root, "junk-cache")
 	if err := os.MkdirAll(filepath.Join(junk, "sub"), 0o755); err != nil {
 		t.Fatal(err)

@@ -9,7 +9,7 @@ import (
 )
 
 func TestHistoryRecordAndList(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache.db")
+	path := filepath.Join(tmpDir(t), "cache.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -44,14 +44,20 @@ func TestHistoryNilCache(t *testing.T) {
 
 // TestRestoreHistory does a full round trip on the real recycle bin:
 // record -> move to bin -> restore from bin -> file is back.
+//
+// Gated: SHFileOperationW needs a message pump, which a headless test process
+// does not have (see TestRecycleBatchPartialLocked).
 func TestRestoreHistory(t *testing.T) {
-	root := t.TempDir()
+	if os.Getenv("DS_SHELL_TESTS") != "1" {
+		t.Skip("set DS_SHELL_TESTS=1 to run tests that drive the shell recycle bin")
+	}
+	root := tmpDir(t)
 	p := filepath.Join(root, "important.txt")
 	if err := os.WriteFile(p, []byte("data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(t.TempDir(), "cache.db")
+	path := filepath.Join(tmpDir(t), "cache.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -90,13 +96,13 @@ func TestRestoreHistory(t *testing.T) {
 // TestRestoreHistoryMissingInBin restores a record whose file is no longer in
 // the recycle bin (simulated: never moved there).
 func TestRestoreHistoryMissingInBin(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	p := filepath.Join(root, "ghost.txt")
 	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	path := filepath.Join(t.TempDir(), "cache.db")
+	path := filepath.Join(tmpDir(t), "cache.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +123,10 @@ func TestRestoreHistoryMissingInBin(t *testing.T) {
 }
 
 func TestMovePathsToRecycleBinBatch(t *testing.T) {
-	root := t.TempDir()
+	if os.Getenv("DS_SHELL_TESTS") != "1" {
+		t.Skip("set DS_SHELL_TESTS=1 to run tests that drive the shell recycle bin")
+	}
+	root := tmpDir(t)
 	var paths []string
 	for i := 0; i < 5; i++ {
 		p := filepath.Join(root, fmt.Sprintf("f%d.tmp", i))
@@ -139,7 +148,7 @@ func TestMovePathsToRecycleBinBatch(t *testing.T) {
 // TestParseRecycleMeta verifies the $I metadata parser on a synthetic file
 // using the real Windows 10 layout (magic, size, FILETIME, pathlen, path).
 func TestParseRecycleMeta(t *testing.T) {
-	dir := t.TempDir()
+	dir := tmpDir(t)
 	metaPath := filepath.Join(dir, "$I000001")
 	origPath := `C:/Users/yeung/AppData/Local/Temp/test.bin`
 	pathBytes := []byte{}
@@ -170,8 +179,8 @@ func TestParseRecycleMeta(t *testing.T) {
 // TestRestoreFromRecycleDir simulates a recycle-bin folder: $I metadata +
 // $R data file; the data file must be moved back to the original location.
 func TestRestoreFromRecycleDir(t *testing.T) {
-	bin := t.TempDir()
-	origDir := filepath.Join(t.TempDir(), "sub")
+	bin := tmpDir(t)
+	origDir := filepath.Join(tmpDir(t), "sub")
 	if err := os.MkdirAll(origDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +224,7 @@ func TestRestoreFromRecycleDir(t *testing.T) {
 // TestRestoreFromRecycleDirNotFound verifies a non-matching target returns
 // the not-in-bin sentinel and leaves files untouched.
 func TestRestoreFromRecycleDirNotFound(t *testing.T) {
-	bin := t.TempDir()
+	bin := tmpDir(t)
 	if err := restoreFromRecycleDir(bin, `C:/no/such/file.txt`); err != errNotInRecycleBin {
 		t.Fatalf("err = %v, want errNotInRecycleBin", err)
 	}

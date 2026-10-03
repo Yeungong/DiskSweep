@@ -20,6 +20,12 @@ Desktop.ini
 # Workspace memory / agent data (never commit)
 .workbuddy/
 
+# Test temp tree (see testmain_test.go::testTempParent). It normally lives
+# beside the project, not inside it, so these are a safety net in case the
+# location is ever moved back.
+.tmp-test/
+tmp-test/
+
 # Compiled binaries (except intended release artifacts)
 *.exe
 !build/bin/*.exe

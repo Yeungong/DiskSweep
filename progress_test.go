@@ -38,7 +38,7 @@ func (c *eventCapture) snapshot() ([]string, []ScanProgress, *ScanSummary) {
 // buildBigTree creates a tree of `dirs` directories each holding one 3-byte file.
 func buildBigTree(t *testing.T, dirs int) string {
 	t.Helper()
-	root := t.TempDir()
+	root := tmpDir(t)
 	for i := 0; i < dirs; i++ {
 		p := filepath.Join(root, fmt.Sprintf("d%03d", i%100), fmt.Sprintf("s%03d", i/100))
 		if err := os.MkdirAll(p, 0o755); err != nil {
@@ -52,6 +52,17 @@ func buildBigTree(t *testing.T, dirs int) string {
 }
 
 func TestScanEmitsProgressEvents(t *testing.T) {
+	// buildBigTree(t, 260) builds root/d{i%100}/s{i/100}/f.bin for i in [0,260):
+	//   - dNNN dirs: d000..d099 (i%100 cycles)                        -> 100
+	//   - sNNN dirs: i/100 is 0,1,2, but only i<260 exists, so
+	//       d000..d059 get s000,s001,s002 and d060..d099 get s000,s001
+	//       60*3 + 40*2                                              -> 260
+	//   - root                                                         ->   1
+	//                                                             total = 361
+	// Each leaf holds one 3-byte file, so 260 files / 780 bytes.
+	const wantDirs = 361
+	const wantBytes = 260 * 3
+
 	root := buildBigTree(t, 260)
 	cap := &eventCapture{}
 	a := &App{}
@@ -69,41 +80,46 @@ func TestScanEmitsProgressEvents(t *testing.T) {
 	if done.OK != true || done.Cancelled {
 		t.Fatalf("unexpected done: %+v", done)
 	}
-	if done.Bytes != 260*3 {
-		t.Fatalf("done.Bytes = %d, want %d", done.Bytes, 260*3)
+	if done.Bytes != wantBytes {
+		t.Fatalf("done.Bytes = %d, want %d", done.Bytes, wantBytes)
 	}
 
-	// Phase sequence: enumerate first, then scan events, monotonic DirsDone.
-	sawScan := false
-	var lastDone int
-	var enumTotal int
-	for _, p := range progress {
-		if p.Phase == "enumerate" {
-			if sawScan {
-				t.Fatal("enumerate progress emitted after scan phase")
-			}
-			if p.DirsTotal < 260 {
-				t.Fatalf("enumerate DirsTotal = %d, want >= 260", p.DirsTotal)
-			}
-			enumTotal = p.DirsTotal
-			continue
+	// The scan is a single concurrent pass, so there is no separate
+	// "enumerate" phase any more. Every progress event must be a scan event,
+	// and because directories are discovered while the walk proceeds:
+	//   - DirsDone only ever moves forward,
+	//   - DirsTotal only ever grows (it is the count known *so far*),
+	//   - a directory is appended to the list before it is counted as done,
+	//     so DirsDone must never exceed DirsTotal.
+	var lastDone, lastTotal int
+	for i, p := range progress {
+		if p.Phase != "scan" {
+			t.Fatalf("progress[%d] has phase %q, want \"scan\" (single-pass scan)", i, p.Phase)
 		}
-		if p.Phase == "scan" {
-			sawScan = true
-			if p.DirsTotal != enumTotal {
-				t.Fatalf("scan DirsTotal %d != enumerate %d", p.DirsTotal, enumTotal)
-			}
-			if p.DirsDone < lastDone {
-				t.Fatal("DirsDone not monotonic")
-			}
-			lastDone = p.DirsDone
+		if p.DirsDone < lastDone {
+			t.Fatalf("DirsDone went backwards: %d -> %d", lastDone, p.DirsDone)
 		}
+		if p.DirsTotal < lastTotal {
+			t.Fatalf("DirsTotal shrank: %d -> %d", lastTotal, p.DirsTotal)
+		}
+		if p.DirsDone > p.DirsTotal {
+			t.Fatalf("DirsDone %d exceeds DirsTotal %d", p.DirsDone, p.DirsTotal)
+		}
+		lastDone, lastTotal = p.DirsDone, p.DirsTotal
 	}
-	if !sawScan {
-		t.Fatal("no scan-phase progress events")
+	if lastDone == 0 {
+		t.Fatal("no meaningful scan progress reported")
 	}
-	if lastDone != enumTotal {
-		t.Fatalf("final DirsDone = %d, want %d", lastDone, enumTotal)
+
+	// The final counters are set from the completed traversal.
+	a.scans.mu.Lock()
+	finalTotal, finalDone := a.scans.dirsTotal, a.scans.dirsDone
+	a.scans.mu.Unlock()
+	if finalTotal != wantDirs {
+		t.Fatalf("dirsTotal = %d, want %d", finalTotal, wantDirs)
+	}
+	if finalDone != wantDirs {
+		t.Fatalf("dirsDone = %d, want %d", finalDone, wantDirs)
 	}
 }
 

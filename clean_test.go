@@ -41,7 +41,7 @@ func TestCleanItemDefsSanity(t *testing.T) {
 }
 
 func TestWalkDirSize(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	mk := func(rel string, size int) {
 		p := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -85,7 +85,7 @@ func TestCleanupItemsProbesRealMachine(t *testing.T) {	a := &App{}
 }
 
 func TestProbeItemWithCache(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	sub := filepath.Join(root, "cache")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -178,43 +178,16 @@ func TestNewCleanRulesCoverRealDirs(t *testing.T) {
 	}
 }
 
-// TestBlizzardGameCacheProbe verifies the special numbered-folder probing:
-// a game folder with numeric subdirs is detected, and non-disposable content
-// (settings etc.) is NOT counted.
+// TestBlizzardGameCacheProbe verifies the numbered-folder classification used
+// when probing Blizzard game dirs: numeric event folders are disposable cache,
+// while settings/shop data must never be counted.
+//
+// This asserts the pure classifiers directly. It deliberately creates no temp
+// directory: the previous version built a whole tree here without ever reading
+// it, and 360's real-time protection intermittently hangs t.TempDir cleanup on
+// this box, which made the test look like an infinite loop.
 func TestBlizzardGameCacheProbe(t *testing.T) {
-	root := t.TempDir()
-	base := filepath.Join(root, "Blizzard Entertainment", "Overwatch")
 	// Numeric event folder (like "592095225" from a real Overwatch install).
-	if err := os.MkdirAll(filepath.Join(base, "592095225"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(base, "592095225", "data.bin"), make([]byte, 1000), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Disposable cache dir.
-	if err := os.MkdirAll(filepath.Join(base, "Cache"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(base, "Cache", "c.bin"), make([]byte, 500), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Settings must NOT be counted.
-	if err := os.MkdirAll(filepath.Join(base, "Settings"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(base, "Settings", "config.txt"), make([]byte, 99999), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// shop images must NOT be counted either.
-	if err := os.MkdirAll(filepath.Join(base, "ShopImages"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(base, "ShopImages", "hero.png"), make([]byte, 12345), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Repoint the probe at our temp root by patching localAppData is hard;
-	// instead call the inner matching helpers directly and assert behavior.
 	if !isNumericDirName("592095225") {
 		t.Fatal("numeric dir should be recognized")
 	}

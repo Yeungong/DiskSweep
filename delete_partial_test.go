@@ -10,8 +10,20 @@ import (
 // batch recycle move fails because one file is locked, the other files that
 // were actually moved are counted as freed and NOT reported as errors, while
 // the locked one is retried individually and reported as locked.
+//
+// Gated behind DS_SHELL_TESTS=1, matching the other tests that drive the real
+// shell/filesystem (see DS_EXEC_CLEAN, DS_PURGE_UPDATERS).
+//
+// It is off by default because SHFileOperationW is documented to require a
+// thread with a message pump. In a headless `go test` process there is none, so
+// the call blocks forever instead of returning -- which surfaced as
+// "panic: test timed out" with the stack parked in syscall.(*LazyProc).Call.
+// The production app is unaffected: it runs inside the Wails event loop.
 func TestRecycleBatchPartialLocked(t *testing.T) {
-	dir := t.TempDir()
+	if os.Getenv("DS_SHELL_TESTS") != "1" {
+		t.Skip("set DS_SHELL_TESTS=1 to run tests that drive the shell recycle bin")
+	}
+	dir := tmpDir(t)
 	names := []string{"f1.dat", "f2.dat", "f3.dat"}
 	for i, n := range names {
 		if err := os.WriteFile(filepath.Join(dir, n), make([]byte, 100*(i+1)), 0o666); err != nil {

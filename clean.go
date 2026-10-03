@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +20,24 @@ const (
 	LevelCautious = "cautious" // deleting forces re-download or re-login
 )
 
+// infoOnlyRuleIDs is the authoritative set of targets DiskSweep refuses to
+// delete. It is kept separate from the rule table so ExecuteClean can enforce
+// the guarantee cheaply, without rebuilding every rule definition (which would
+// re-run glob expansion and disk reads) just to check a flag.
+//
+// These directories look like "wasted space" but are load-bearing: WinSxS and
+// Windows\Installer back Windows Update, uninstall and repair; WindowsApps is
+// the Store apps themselves. All three are serviceable only by DISM or Windows
+// itself. A cleanup tool that deletes them breaks the OS.
+//
+// TestInfoOnlyRulesMatchGuard asserts this set never drifts from the InfoOnly
+// flags in cleanItemDefs.
+var infoOnlyRuleIDs = map[string]bool{
+	"winsxs":            true,
+	"windows_installer": true,
+	"windows_apps":      true,
+}
+
 // CleanItem is one rule-driven cleanup target.
 type CleanItem struct {
 	ID            string   `json:"id"`
@@ -25,6 +45,7 @@ type CleanItem struct {
 	Description   string   `json:"description"`
 	Level         string   `json:"level"`
 	Paths         []string `json:"paths"`                // candidate paths (probed for existence)
+	PathGlobs     []string `json:"pathGlobs,omitempty"`  // glob patterns expanded at probe time (e.g. "*-updater")
 	Match         string   `json:"match,omitempty"`      // "" | "glob:<pattern>" | "ext:<ext>" | "name:<name>"
 	MaxAgeDays    int      `json:"maxAgeDays,omitempty"` // >0: only entries older than N days
 	RequiresAdmin bool     `json:"requiresAdmin"`
@@ -32,6 +53,92 @@ type CleanItem struct {
 	Size          int64    `json:"size"`
 	FileCount     int      `json:"fileCount"`
 	Drive         string   `json:"drive"` // primary drive of the first existing path; "ALL" for multi-drive items
+
+	// InfoOnly marks a target that DiskSweep will never delete: it exists purely
+	// so the user can see where the space went. Components like WinSxS and
+	// Windows\Installer must only be serviced by DISM, and deleting them by
+	// hand breaks servicing and Store apps. ExecuteClean refuses these outright
+	// (see delete.go), so the guarantee does not depend on the UI hiding them.
+	InfoOnly bool `json:"infoOnly"`
+	// InfoNote explains how to actually reclaim the space, shown in the UI
+	// instead of a clean action.
+	InfoNote string `json:"infoNote,omitempty"`
+
+	// ProtectRecentMinutes keeps cleanup away from entries that were touched very
+	// recently, and is the guard that makes cleaning a shared, live directory
+	// like %TEMP% safe.
+	//
+	// Programs routinely save state atomically: write "X.json.2.tmp", then
+	// rename it over "X.json". That temp file exists for only an instant, so any
+	// tool that scans and deletes %TEMP% concurrently can remove it in the
+	// window between write and rename -- the program then fails with ENOENT and
+	// looks broken for no visible reason. That is exactly what happened: a
+	// WorkBuddy session died because DiskSweep deleted
+	// %TEMP%\workbuddy-conversation-product-*\acc-product-config-*.json.2.tmp.
+	//
+	// Age alone is not a safe signal either, because a file opened at process
+	// start is legitimately old, so this is deliberately a "recently touched"
+	// (mtime) window rather than a filesystem-lock check: the lock is released
+	// between the write and the rename, which is precisely when we must not act.
+	//
+	// >0 also forces per-entry handling: the whole-directory fast path is
+	// skipped, because a directory as a whole has no meaningful mtime.
+	ProtectRecentMinutes int `json:"protectRecentMinutes,omitempty"`
+
+	// NoAutoCheck keeps the UI from pre-selecting this rule. Rules aggressive
+	// enough to affect running programs must be an explicit opt-in.
+	NoAutoCheck bool `json:"noAutoCheck,omitempty"`
+
+	// Children breaks a target down into its notable parts, so the user can see
+	// *what* is taking the space (which Store app, for example) instead of only
+	// a total. Only populated for rules that opt in; see windowsAppsBreakdown.
+	Children []ItemChild `json:"children,omitempty"`
+	// ChildCount is how many distinct parts exist, which can exceed
+	// len(Children) when only the largest are listed.
+	ChildCount int `json:"childCount,omitempty"`
+}
+
+// ItemChild is one notable entry inside a cleanup target.
+type ItemChild struct {
+	Name string `json:"name"`         // friendly label shown in the UI
+	ID   string `json:"id,omitempty"` // raw identity (e.g. Store package name)
+	Size int64  `json:"size"`
+}
+
+// expandPathGlobs resolves patterns such as
+// %LOCALAPPDATA%\*-updater into the concrete directories that exist right now.
+// Rules use this for folders whose names change between releases (every app
+// ships its own "*-updater" cache dir), so a single rule covers them all
+// instead of one hard-coded rule per product.
+//
+// Only the last path element may be a glob: dir/*/sub has no unambiguous
+// meaning here, and a recursive wildcard is exactly what we do not want in a
+// deletion rule.
+func expandPathGlobs(patterns []string) []string {
+	out := []string{}
+	for _, pat := range patterns {
+		dir := filepath.Dir(pat)
+		base := filepath.Base(pat)
+		if !strings.ContainsAny(base, "*?") {
+			if _, err := os.Stat(pat); err == nil {
+				out = append(out, pat)
+			}
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if ok, _ := filepath.Match(base, e.Name()); ok {
+				out = append(out, filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	return out
 }
 
 func homeDir() string {
@@ -55,6 +162,11 @@ func systemRoot() string {
 
 // cleanItemDefs returns the full rule set. Rules whose paths don't exist are
 // filtered out by CleanupItems.
+//
+// PathGlobs are resolved here rather than only at probe time: every rule must
+// leave this function with a concrete, non-empty Paths list representing what
+// will actually be deleted. Probe-time globbing alone let UI (probe) and
+// cleanup (execute) disagree about the target set.
 func (a *App) cleanItemDefs() []CleanItem {
 	home := homeDir()
 	local := localAppData()
@@ -62,7 +174,7 @@ func (a *App) cleanItemDefs() []CleanItem {
 	hp := func(rel ...string) string { return filepath.Join(append([]string{home}, rel...)...) }
 	win := func(rel ...string) string { return filepath.Join(append([]string{systemRoot()}, rel...)...) }
 
-	return []CleanItem{
+	return expandDefs([]CleanItem{
 		{
 			ID: "recycle_bin", Name: "回收站",
 			Description: "清空所有磁盘的回收站",
@@ -74,9 +186,23 @@ func (a *App) cleanItemDefs() []CleanItem {
 			Level:       LevelSafe, Paths: []string{la("Temp")}, MaxAgeDays: 7,
 		},
 		{
+			// The most aggressive temp rule, and the one that must be safest.
+			//
+			// It used to have no Match and no MaxAgeDays, so it took the
+			// whole-directory path and tried to recycle all of %TEMP% in one
+			// move -- which deletes the working files of whatever is running.
+			// It was also LevelSafe, so the UI pre-selected it. That combination
+			// killed a live WorkBuddy session (see ProtectRecentMinutes).
+			//
+			// Now: per-entry only, nothing touched in the last 30 minutes, and
+			// never pre-selected.
 			ID: "temp_user_all", Name: "用户临时文件（全量）",
-			Description: "清理全部 %TEMP% 内容（正在使用的文件会跳过）",
-			Level:       LevelSafe, Paths: []string{la("Temp")},
+			Description: "清理 %TEMP% 中 30 分钟内未被改动的文件。" +
+				"正在写入的临时文件会被保留：很多程序用「先写临时文件、再改名」的方式保存状态，删掉会导致对方报错甚至数据丢失",
+			Level:                LevelSafe,
+			Paths:                []string{la("Temp")},
+			ProtectRecentMinutes: 30,
+			NoAutoCheck:          true,
 		},
 		{
 			ID: "temp_windows", Name: "Windows 临时文件",
@@ -115,6 +241,35 @@ func (a *App) cleanItemDefs() []CleanItem {
 			Level:       LevelModerate, Paths: []string{la("D3DSCache")},
 		},
 		{
+			// NVIDIA's own shader cache is separate from D3DSCache and is
+			// routinely one of the largest caches on a gaming machine
+			// (5.2 GB measured on this box). Rebuilt automatically.
+			ID: "nvidia_cache", Name: "NVIDIA 着色器缓存（DXCache/GL Cache）",
+			Description: "NVIDIA 驱动的 DX 着色器缓存与 OpenGL 缓存（删除后游戏首次启动会重新编译着色器，稍慢；不影响驱动与设置）",
+			Level:       LevelModerate,
+			Paths: []string{
+				la("NVIDIA", "DXCache"),
+				la("NVIDIA", "GLCache"),
+				la("NVIDIA", "ComputeCache"),
+				la("NVIDIA", "NV_Cache"),
+				la("NVIDIA Corporation", "NV_Cache"),
+			},
+		},
+		{
+			// NVIDIA keeps downloaded driver installers here. They are only
+			// needed for uninstall/rollback; Windows keeps its own copy.
+			ID: "nvidia_installer", Name: "NVIDIA 驱动安装包残留",
+			Description: "NVIDIA 已下载的驱动安装包（驱动本身已安装，删除不影响使用）",
+			Level:       LevelModerate,
+			Paths: []string{
+				la("NVIDIA Corporation", "Downloader"),
+				la("NVIDIA", "NvBackend"),
+				filepath.Join(programData(), "NVIDIA Corporation", "Downloader"),
+				filepath.Join(programData(), "NVIDIA", "NvTelemetry"),
+			},
+			RequiresAdmin: true,
+		},
+		{
 			ID: "windows_logs", Name: "Windows 日志",
 			Description: "超过 30 天的 Windows\\Logs",
 			Level:       LevelModerate, Paths: []string{win("Logs")}, MaxAgeDays: 30, RequiresAdmin: true,
@@ -137,7 +292,8 @@ func (a *App) cleanItemDefs() []CleanItem {
 		{
 			ID: "npm_cache", Name: "npm 缓存",
 			Description: "npm 包缓存（需要时重新下载）",
-			Level:       LevelModerate, Paths: []string{la("npm-cache"), hp(".npm")},
+			Level:       LevelModerate,
+			Paths:       []string{la("npm-cache"), hp(".npm"), filepath.Join(roamingAppData(), "npm-cache")},
 		},
 		{
 			ID: "pip_cache", Name: "pip 缓存",
@@ -148,6 +304,19 @@ func (a *App) cleanItemDefs() []CleanItem {
 			ID: "go_cache", Name: "Go 模块缓存",
 			Description: "GOPATH 模块缓存（重新编译时重新下载）",
 			Level:       LevelModerate, Paths: []string{hp("go", "pkg", "mod")},
+		},
+		{
+			// Separate from the module cache: build artifacts for packages you
+			// compiled. Clearing only costs one slower rebuild.
+			ID: "go_build_cache", Name: "Go 编译缓存",
+			Description: "Go 编译中间产物缓存（go build cache；清空后首次编译稍慢，等价于 go clean -cache）",
+			Level:       LevelModerate, Paths: []string{la("go-build")},
+		},
+		{
+			ID: "pnpm_cache", Name: "pnpm 缓存",
+			Description: "pnpm 全局 store 与缓存（需要时重新下载）",
+			Level:       LevelModerate,
+			Paths:       []string{la("pnpm"), la("pnpm-cache"), la("pnpm-state")},
 		},
 		{
 			ID: "nuget_cache", Name: "NuGet 缓存",
@@ -366,6 +535,20 @@ func (a *App) cleanItemDefs() []CleanItem {
 			Level:       LevelCautious, Paths: []string{filepath.Join(roamingAppData(), "Continue")},
 		},
 		{
+			// Every Electron/auto-updating app ships its own "*-updater"
+			// cache folder under %LOCALAPPDATA% and none of them ever clean up
+			// after themselves. Measured ~2.9 GB across 20+ products on this
+			// box. Deleting them only costs a re-download on the next update.
+			ID: "updater_cache", Name: "应用更新包缓存（*-updater）",
+			Description: "各桌面应用下载更新时留下的安装包缓存（WorkBuddy / MiMo / Coze / ZCode / Fiddler / Qoder 等）。删除后下次更新重新下载，不影响已安装的软件",
+			Level:       LevelModerate,
+			PathGlobs: []string{
+				la("*-updater"),
+				filepath.Join(roamingAppData(), "*-updater"),
+				hp("*-updater"),
+			},
+		},
+		{
 			ID: "windows_old", Name: "Windows.old",
 			Description: "旧系统备份目录（删除不可恢复）",
 			Level:       LevelCautious, Paths: []string{`C:\Windows.old`}, RequiresAdmin: true,
@@ -533,7 +716,56 @@ func (a *App) cleanItemDefs() []CleanItem {
 			},
 			RequiresAdmin: true,
 		},
+		{
+			// ---- Probe-only targets -------------------------------------
+			// These three hold a lot of the C: drive, but none of them may be
+			// deleted by a cleanup tool: they are serviced by DISM / Windows
+			// itself, and removing them by hand breaks Windows Update,
+			// uninstall/repair, and Store apps. They exist so the user can see
+			// where the space went; ExecuteClean refuses them outright.
+			ID: "winsxs", Name: "Windows 组件存储（WinSxS）",
+			Description: "系统组件的旧版本备份，供更新回滚和功能安装使用。只能用 DISM 清理，手动删除会导致系统无法更新或修复",
+			Level:       LevelCautious,
+			Paths:       []string{win("WinSxS")},
+			InfoOnly:    true,
+			InfoNote: "回收方式：以管理员运行 DISM /Online /Cleanup-Image /StartComponentCleanup（加 /ResetBase 可再压缩，但会失去回滚旧更新的能力）。" +
+				"注意该目录与 System32 共享硬链接，显示的体积会大于实际新增占用",
+		},
+		{
+			ID: "windows_installer", Name: "Windows 安装缓存（MSI）",
+			Description: "已安装程序的 MSI/MSP 安装包备份，用于修复和卸载。删除后对应的软件将无法卸载或修复",
+			Level:       LevelCautious,
+			Paths:       []string{win("Installer")},
+			InfoOnly:    true,
+			InfoNote: "回收方式：不要手动删除。先卸载不用的软件，再用 DISM /Online /Cleanup-Image /StartComponentCleanup 或专门的孤立补丁清理工具处理残留",
+		},
+		{
+			ID: "windows_apps", Name: "应用商店应用（WindowsApps）",
+			Description: "从 Microsoft Store 安装的应用本体，体积随已安装应用数量增长",
+			Level:       LevelCautious,
+			Paths:       []string{filepath.Join(programFiles(), "WindowsApps")},
+			InfoOnly:    true,
+			InfoNote:    "回收方式：在「设置 → 应用 → 已安装的应用」里卸载不用的商店应用；部分应用可在设置中迁移到其他磁盘",
+		},
+	})
+}
+
+// expandDefs folds each rule's PathGlobs into its Paths so that every rule
+// leaves cleanItemDefs with a concrete, non-empty target list. Rules whose
+// globs matched nothing are dropped rather than returned with an empty Paths
+// list, which is what CleanupItems would do anyway.
+func expandDefs(defs []CleanItem) []CleanItem {
+	out := make([]CleanItem, 0, len(defs))
+	for _, d := range defs {
+		if len(d.PathGlobs) > 0 {
+			d.Paths = append(d.Paths, expandPathGlobs(d.PathGlobs)...)
+			if len(d.Paths) == 0 {
+				continue
+			}
+		}
+		out = append(out, d)
 	}
+	return out
 }
 
 // roamingAppData returns the %APPDATA% directory.
@@ -581,6 +813,11 @@ func (a *App) CleanupItems() []CleanItem {
 // cleanup center always reflects the current disk state, even if the
 // snapshot is stale or the scan happened long ago.
 func (a *App) probeItem(item *CleanItem) {
+	// Glob-based rules (names that change between releases) expand to the
+	// concrete directories that exist right now, then share the normal path
+	// probing below.
+	a.probeGlobPaths(item)
+
 	// System-level items whose primary path is unreadable by design
 	// (permission-denied), so os.Stat would hide them. Probe them specially.
 	switch item.ID {
@@ -604,35 +841,26 @@ func (a *App) probeItem(item *CleanItem) {
 		}
 		return
 	case "blizzard_game_cache":
-		// Blizzard games (esp. Overwatch) accumulate numbered folders under
-		// %LOCALAPPDATA%\Blizzard Entertainment\<Game>\ — one per patch/event.
-		// These are event caches that re-download; settings live elsewhere.
-		// Also clean the classic Cache/Logs/Errors subdirs when present.
-		item.Exists = false
-		games := []string{"Overwatch", "Diablo IV", "World of Warcraft", "Hearthstone", "Call of Duty", "StarCraft II"}
-		for _, g := range games {
-			base := filepath.Join(localAppData(), "Blizzard Entertainment", g)
-			entries, err := os.ReadDir(base)
-			if err != nil {
-				continue
-			}
-			for _, e := range entries {
-				if !e.IsDir() {
-					continue
-				}
-				// Numbered folder = event/patch cache; also known cache dirs.
-				if isNumericDirName(e.Name()) || isBlizzardDisposableDir(e.Name()) {
-					p := filepath.Join(base, e.Name())
-					s, fc := walkDirSize(p)
-					item.Exists = true
-					item.Size += s
-					item.FileCount += fc
-					if item.Drive == "" {
-						item.Drive = "C"
-					}
-				}
+		// The real targets are discovered at runtime (numbered event/patch
+		// folders), so store the resolved list on the item: the cleanup then
+		// operates on exactly the set the UI measured.
+		item.Paths = blizzardGameCachePaths()
+		item.Exists = len(item.Paths) > 0
+		for _, p := range item.Paths {
+			s, fc := walkDirSize(p)
+			item.Size += s
+			item.FileCount += fc
+			if item.Drive == "" && len(p) > 1 {
+				item.Drive = strings.ToUpper(p[:1])
 			}
 		}
+		return
+	}
+
+	// Probe-only targets (WinSxS / Windows\Installer / WindowsApps): measured
+	// so the user can see the space, but never cleanable.
+	if item.InfoOnly {
+		a.probeInfoOnly(item)
 		return
 	}
 
@@ -652,6 +880,217 @@ func (a *App) probeItem(item *CleanItem) {
 		} else {
 			item.Size += info.Size()
 			item.FileCount++
+		}
+	}
+}
+
+// probeInfoOnly measures a rule that DiskSweep will never delete (WinSxS,
+// Windows\Installer, WindowsApps).
+//
+// Its whole purpose is to make the space visible and explain how to reclaim it,
+// so a permission failure still reports the item instead of hiding it --
+// otherwise the largest consumers on C: would silently vanish from the list,
+// which is exactly the complaint that started this: "don't know what ate the
+// disk". ExecuteClean refuses these items, so showing them is safe.
+func (a *App) probeInfoOnly(item *CleanItem) {
+	item.Exists = false
+	for _, p := range item.Paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		item.Exists = true
+		if item.Drive == "" && len(p) > 1 {
+			item.Drive = strings.ToUpper(p[:1])
+		}
+		if !info.IsDir() {
+			item.Size += info.Size()
+			item.FileCount++
+			continue
+		}
+
+		// WindowsApps gets a per-app breakdown in the same pass, so the walk
+		// over ~11 GB / 58k files is not paid twice.
+		if item.ID == "windows_apps" {
+			children, appCount, size, files, err := windowsAppsBreakdown(p)
+			if err == nil {
+				item.Children = children
+				item.ChildCount = appCount
+				item.Size += size
+				item.FileCount += files
+				continue
+			}
+			// fall through to the plain walk if the directory cannot be listed
+		}
+
+		s, fc := walkDirSize(p)
+		item.Size += s
+		item.FileCount += fc
+	}
+	if item.Exists && item.FileCount == 0 {
+		// Present but not enumerable (standard user on a locked-down box).
+		// Report the item with an unmeasured size instead of a fake zero.
+		item.InfoNote = "当前权限无法读取体积，以管理员运行可测量。" + item.InfoNote
+	}
+}
+
+// windowsAppsDetailLimit is how many Store apps are listed individually. The
+// rest are folded into one "other" row so the numbers still add up.
+const windowsAppsDetailLimit = 15
+
+// appxDisplayNameRe matches the package's own DisplayName, which is the first
+// <DisplayName> element in AppxManifest.xml (under <Properties>).
+var appxDisplayNameRe = regexp.MustCompile(`<DisplayName>([^<]*)</DisplayName>`)
+
+// windowsAppsBreakdown groups the Store app directories by package identity and
+// returns the largest ones, the total app count, and the aggregate size.
+//
+// A single app owns several directories: the payload plus one per resource
+// variant ("_neutral_split.scale-400_", "_neutral_~_"). Summing per directory
+// would scatter one app over many rows and understate each, so everything
+// before the first "_" is treated as the identity -- that is the manifest's
+// <Identity Name> by construction.
+//
+// Friendly names come from each package's AppxManifest.xml. Localised packages
+// store an "ms-resource:..." token that resolves through resources.pri, which we
+// cannot decode, so those fall back to the package identity.
+func windowsAppsBreakdown(root string) (children []ItemChild, appCount int, total int64, files int, err error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+
+	type acc struct {
+		size    int64
+		mainDir string // best directory to read AppxManifest.xml from
+	}
+	byID := map[string]*acc{}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		id := name
+		if i := strings.IndexByte(name, '_'); i > 0 {
+			id = name[:i]
+		}
+		s, fc := walkDirSize(filepath.Join(root, name))
+		total += s
+		files += fc
+
+		acc1 := byID[id]
+		if acc1 == nil {
+			acc1 = &acc{}
+			byID[id] = acc1
+		}
+		acc1.size += s
+		if acc1.mainDir == "" || preferManifestDir(name, acc1.mainDir) {
+			acc1.mainDir = name
+		}
+	}
+
+	all := make([]ItemChild, 0, len(byID))
+	for id, acc1 := range byID {
+		all = append(all, ItemChild{
+			Name: appDisplayName(filepath.Join(root, acc1.mainDir), id),
+			ID:   id,
+			Size: acc1.size,
+		})
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Size != all[j].Size {
+			return all[i].Size > all[j].Size
+		}
+		return all[i].Name < all[j].Name // stable output for tests
+	})
+
+	appCount = len(all)
+	if len(all) > windowsAppsDetailLimit {
+		rest := all[windowsAppsDetailLimit:]
+		var restSize int64
+		for _, c := range rest {
+			restSize += c.Size
+		}
+		all = append(all[:windowsAppsDetailLimit:windowsAppsDetailLimit], ItemChild{
+			Name: fmt.Sprintf("其他 %d 个应用", len(rest)),
+			Size: restSize,
+		})
+	}
+	return all, appCount, total, files, nil
+}
+
+// isResourceVariantDir reports whether a WindowsApps directory holds only
+// resources (scale/theme splits) rather than a real payload. Those have no
+// usable AppxManifest.xml.
+func isResourceVariantDir(name string) bool {
+	return strings.Contains(name, "split.scale") || strings.Contains(name, "_~_")
+}
+
+// preferManifestDir picks which of an app's directories to read the manifest
+// from, favouring a real payload directory over a resource-only variant.
+func preferManifestDir(candidate, current string) bool {
+	cur, can := isResourceVariantDir(current), isResourceVariantDir(candidate)
+	if cur == can {
+		return candidate < current // deterministic pick
+	}
+	return !can
+}
+
+// appDisplayName reads the package's display name, falling back to its identity.
+func appDisplayName(dir, fallback string) string {
+	b, err := os.ReadFile(filepath.Join(dir, "AppxManifest.xml"))
+	if err != nil {
+		return fallback
+	}
+	m := appxDisplayNameRe.FindSubmatch(b)
+	if m == nil {
+		return fallback
+	}
+	name := strings.TrimSpace(string(m[1]))
+	if name == "" || strings.HasPrefix(name, "ms-resource:") {
+		return fallback
+	}
+	return name
+}
+
+// probeGlobPaths resolves a rule's PathGlobs and folds the results into
+// item.Paths, so that the paths the UI measured are exactly the paths the
+// cleanup will act on (see resolveItemPaths).
+//
+// Already-expanded paths are skipped, which makes this idempotent: cleanItemDefs
+// expands globs up front (so a rule always carries a concrete Paths list), and
+// probing then only has to measure them.
+func (a *App) probeGlobPaths(item *CleanItem) {
+	if len(item.PathGlobs) == 0 {
+		return
+	}
+	have := make(map[string]bool, len(item.Paths))
+	for _, p := range item.Paths {
+		have[p] = true
+	}
+	found := []string{}
+	for _, p := range expandPathGlobs(item.PathGlobs) {
+		if !have[p] {
+			found = append(found, p)
+		}
+	}
+	if len(found) == 0 {
+		// Nothing new to add, but the paths we already carry still count as
+		// existing so the item is not filtered out by CleanupItems.
+		if len(item.Paths) > 0 {
+			item.Exists = true
+		}
+		return
+	}
+	item.Exists = true
+	item.Paths = append(item.Paths, found...)
+	for _, p := range found {
+		s, fc := walkDirSize(p)
+		item.Size += s
+		item.FileCount += fc
+		if item.Drive == "" && len(p) > 1 {
+			item.Drive = strings.ToUpper(p[:1])
 		}
 	}
 }
@@ -711,8 +1150,25 @@ func (a *App) dirSizeCached(p string) (int64, int) {
 // walkDirSize recursively computes the size and file count of a directory
 // using bounded concurrency. The semaphore is acquired inside the spawned
 // goroutine so the dispatch path never blocks (avoids semaphore deadlock).
+// walkDirSize returns the total size and file count of p, recursively.
+//
+// Concurrency follows the same rule as walkAndScan: a semaphore bounds how many
+// workers are inside the traversal, and the slot is taken BEFORE a goroutine is
+// spawned. The previous version spawned a goroutine for every subdirectory and
+// only then blocked on the semaphore, so a wide directory (WinSxS has ~19k
+// entries) created thousands of goroutines that did nothing but wait — with
+// dozens of rules probing in parallel that is a large, pointless stack and
+// scheduler cost. When the pool is saturated a child is now walked inline on the
+// current goroutine, which keeps progress without piling up.
 func walkDirSize(p string) (int64, int) {
-	sem := make(chan struct{}, runtime.NumCPU()*2)
+	workers := runtime.NumCPU() * 2
+	if workers > 32 {
+		workers = 32
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var size int64
@@ -724,23 +1180,37 @@ func walkDirSize(p string) (int64, int) {
 		if err != nil {
 			return
 		}
+		subdirs := make([]string, 0, 8)
+		var localSize int64
+		var localFiles int
 		for _, e := range entries {
 			if e.IsDir() {
-				sub := filepath.Join(dir, e.Name())
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					sem <- struct{}{}
-					defer func() { <-sem }()
-					walk(sub)
-				}()
+				subdirs = append(subdirs, filepath.Join(dir, e.Name()))
 				continue
 			}
 			if info, err := e.Info(); err == nil {
-				mu.Lock()
-				size += info.Size()
-				files++
-				mu.Unlock()
+				localSize += info.Size()
+				localFiles++
+			}
+		}
+		if localFiles > 0 {
+			mu.Lock()
+			size += localSize
+			files += localFiles
+			mu.Unlock()
+		}
+
+		for _, sd := range subdirs {
+			select {
+			case sem <- struct{}{}:
+				wg.Add(1)
+				go func(child string) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					walk(child)
+				}(sd)
+			default:
+				walk(sd) // inline: pool is full
 			}
 		}
 	}
@@ -754,6 +1224,54 @@ func programData() string {
 		return p
 	}
 	return `C:\ProgramData`
+}
+
+// programFiles returns %ProgramFiles%. Kept separate from programData because
+// the Store app directory lives under Program Files, not ProgramData.
+func programFiles() string {
+	if p := os.Getenv("ProgramFiles"); p != "" {
+		return p
+	}
+	if p := os.Getenv("ProgramW6432"); p != "" {
+		return p
+	}
+	return `C:\Program Files`
+}
+
+// blizzardGames are the Blizzard titles whose %LOCALAPPDATA% folder is probed
+// for disposable event/patch caches.
+var blizzardGames = []string{
+	"Overwatch", "Diablo IV", "World of Warcraft", "Hearthstone",
+	"Call of Duty", "StarCraft II",
+}
+
+// blizzardGameCachePaths returns the per-game directories that are safe to
+// remove: the numbered event/patch folders (Blizzard adds one per content
+// update, and they accumulate forever) plus the classic Cache/Logs/Errors/
+// Saved subdirs. The game root and its settings are never included.
+//
+// Probing and cleaning share this function on purpose: the size shown in the
+// UI is the size of exactly this set, so cleaning it can never leave a large
+// number behind with nothing to show for it.
+func blizzardGameCachePaths() []string {
+	out := []string{}
+	for _, g := range blizzardGames {
+		base := filepath.Join(localAppData(), "Blizzard Entertainment", g)
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			// Numbered folder = event/patch cache; also known cache dirs.
+			if isNumericDirName(e.Name()) || isBlizzardDisposableDir(e.Name()) {
+				out = append(out, filepath.Join(base, e.Name()))
+			}
+		}
+	}
+	return out
 }
 
 // isNumericDirName reports whether name consists only of digits — Blizzard

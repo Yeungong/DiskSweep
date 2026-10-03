@@ -38,12 +38,29 @@ export namespace main {
 	        this.custom = source["custom"];
 	    }
 	}
+	export class ItemChild {
+	    name: string;
+	    id?: string;
+	    size: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ItemChild(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.id = source["id"];
+	        this.size = source["size"];
+	    }
+	}
 	export class CleanItem {
 	    id: string;
 	    name: string;
 	    description: string;
 	    level: string;
 	    paths: string[];
+	    pathGlobs?: string[];
 	    match?: string;
 	    maxAgeDays?: number;
 	    requiresAdmin: boolean;
@@ -51,6 +68,12 @@ export namespace main {
 	    size: number;
 	    fileCount: number;
 	    drive: string;
+	    infoOnly: boolean;
+	    infoNote?: string;
+	    protectRecentMinutes?: number;
+	    noAutoCheck?: boolean;
+	    children?: ItemChild[];
+	    childCount?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new CleanItem(source);
@@ -63,6 +86,7 @@ export namespace main {
 	        this.description = source["description"];
 	        this.level = source["level"];
 	        this.paths = source["paths"];
+	        this.pathGlobs = source["pathGlobs"];
 	        this.match = source["match"];
 	        this.maxAgeDays = source["maxAgeDays"];
 	        this.requiresAdmin = source["requiresAdmin"];
@@ -70,7 +94,31 @@ export namespace main {
 	        this.size = source["size"];
 	        this.fileCount = source["fileCount"];
 	        this.drive = source["drive"];
+	        this.infoOnly = source["infoOnly"];
+	        this.infoNote = source["infoNote"];
+	        this.protectRecentMinutes = source["protectRecentMinutes"];
+	        this.noAutoCheck = source["noAutoCheck"];
+	        this.children = this.convertValues(source["children"], ItemChild);
+	        this.childCount = source["childCount"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class PathError {
 	    path: string;
@@ -350,6 +398,7 @@ export namespace main {
 	        this.restored = source["restored"];
 	    }
 	}
+	
 	
 	export class RestoreResult {
 	    ok: boolean;

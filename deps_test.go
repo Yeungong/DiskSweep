@@ -58,7 +58,7 @@ func TestDependenciesProbeRealMachine(t *testing.T) {
 }
 
 func TestFindDirByName(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	// Case-insensitive dir name match.
 	if err := os.MkdirAll(filepath.Join(root, "Llama.Cpp"), 0o755); err != nil {
 		t.Fatal(err)

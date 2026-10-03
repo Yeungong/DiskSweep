@@ -8,7 +8,7 @@ import (
 )
 
 func TestRecordAndQueryDiskSnapshot(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "test.db")
+	path := filepath.Join(tmpDir(t), "test.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestRecordAndQueryDiskSnapshot(t *testing.T) {
 // TestRecordSameDayReplaces verifies a second scan on the same day overwrites
 // the previous snapshot instead of appending.
 func TestRecordSameDayReplaces(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "test.db")
+	path := filepath.Join(tmpDir(t), "test.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestRecordSameDayReplaces(t *testing.T) {
 
 // TestDirDiffsNeedsTwoDays verifies no deltas when only one snapshot exists.
 func TestDirDiffsNeedsTwoDays(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "test.db")
+	path := filepath.Join(tmpDir(t), "test.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)

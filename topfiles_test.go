@@ -48,7 +48,7 @@ func TestTopFilesReset(t *testing.T) {
 }
 
 func TestScanCollectsTopFiles(t *testing.T) {
-	root := t.TempDir()
+	root := tmpDir(t)
 	mk := func(rel string, size int) {
 		p := filepath.Join(root, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
@@ -78,5 +78,25 @@ func TestScanCollectsTopFiles(t *testing.T) {
 	}
 	if filepath.Base(top[0].Path) != "big.bin" {
 		t.Fatalf("expected big.bin, got %s", top[0].Path)
+	}
+}
+
+// TestLocalTopFilesZeroValue is the regression test for the per-worker buffer.
+//
+// A never-initialised localTopFiles has limit == 0, so the "is the heap full
+// yet" test is false on the very first add and the code fell straight through to
+// heap[0] on an empty heap: an immediate panic. The shared collector already
+// guards this; the worker buffer must not be the one that reintroduces it.
+func TestLocalTopFilesZeroValue(t *testing.T) {
+	var l localTopFiles // deliberately never initialised
+	for i := 0; i < 500; i++ {
+		l.add("f", int64(i+1), 0)
+	}
+	if l.heap.Len() == 0 {
+		t.Fatal("zero-value buffer collected nothing")
+	}
+	// It must also start keeping the largest values, not the first ones.
+	if l.heap[0].Size < 1 {
+		t.Fatalf("unexpected heap root: %+v", l.heap[0])
 	}
 }

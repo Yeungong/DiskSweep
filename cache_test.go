@@ -7,7 +7,7 @@ import (
 )
 
 func TestSnapshotRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache.db")
+	path := filepath.Join(tmpDir(t), "cache.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestSnapshotRoundTrip(t *testing.T) {
 }
 
 func TestSnapshotNoRows(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache.db")
+	path := filepath.Join(tmpDir(t), "cache.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestSnapshotNoRows(t *testing.T) {
 }
 
 func TestSnapshotRootIsolation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache.db")
+	path := filepath.Join(tmpDir(t), "cache.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestSnapshotRootIsolation(t *testing.T) {
 }
 
 func TestLoadSnapshotAppIntegration(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "cache.db")
+	path := filepath.Join(tmpDir(t), "cache.db")
 	s, err := openSnapshotStore(path)
 	if err != nil {
 		t.Fatal(err)

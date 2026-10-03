@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // DepCleanable describes whether a dependency may be cleaned.
@@ -218,31 +219,44 @@ func (a *App) depDefs() []DepInfo {
 }
 
 // Dependencies probes the knowledge base and returns deps present on this
-// machine, with real sizes. Runs in parallel; missing paths are filtered out.
+// machine, with real sizes. Missing paths are filtered out.
+//
+// The path probe runs in parallel, like CleanupItems does, because it is not
+// cheap: model directories (.ollama, .lmstudio, ComfyUI) are routinely tens of
+// gigabytes, and this call is synchronous from the UI. Walking them one after
+// another left the window frozen for as long as the whole set took.
 func (a *App) Dependencies() []DepInfo {
 	defs := a.depDefs()
-	// First pass: probe explicit paths.
+	// First pass: probe explicit paths (one goroutine per rule, each writing
+	// only its own index, so no locking is needed).
+	var wg sync.WaitGroup
 	for i := range defs {
-		for _, p := range defs[i].Paths {
-			info, err := os.Stat(p)
-			if err != nil {
-				continue
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			d := &defs[idx]
+			for _, p := range d.Paths {
+				info, err := os.Stat(p)
+				if err != nil {
+					continue
+				}
+				drive := "?"
+				if len(p) > 1 {
+					drive = strings.ToUpper(p[:1])
+				}
+				d.markExists(drive)
+				if info.IsDir() {
+					s, fc := walkDirSize(p)
+					d.Size += s
+					d.FileCount += fc
+				} else {
+					d.Size += info.Size()
+					d.FileCount++
+				}
 			}
-			drive := "?"
-			if len(p) > 1 {
-				drive = strings.ToUpper(p[:1])
-			}
-			defs[i].markExists(drive)
-			if info.IsDir() {
-				s, fc := walkDirSize(p)
-				defs[i].Size += s
-				defs[i].FileCount += fc
-			} else {
-				defs[i].Size += info.Size()
-				defs[i].FileCount++
-			}
-		}
+		}(i)
 	}
+	wg.Wait()
 	// Second pass: locate by directory name across all fixed drives (for
 	// deps installed in non-standard locations, e.g. D:\llama.cpp).
 	drives := a.GetDrives()

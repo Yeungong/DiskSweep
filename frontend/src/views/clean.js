@@ -29,6 +29,15 @@ function esc(s) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Some rules resolve to dozens of paths (Blizzard event caches add one folder
+// per content update), so show the first couple plus a count instead of an
+// unreadable wall of paths.
+function pathSummary(paths) {
+    const list = paths || [];
+    if (list.length <= 2) return list.map(esc).join('；');
+    return `${list.slice(0, 2).map(esc).join('；')} 等 ${list.length} 个位置`;
+}
+
 // Items that permanently delete data (no recycle-bin undo).
 const PERMANENT_IDS = new Set(['recycle_bin', 'vss_shadows', 'win_upgrade_residue', 'windows_old']);
 
@@ -62,19 +71,59 @@ export async function refresh() {
     // Collapse all drives except the currently analyzed one.
     const collapsed = new Set(driveOrder.filter(d => d !== state.currentDrive));
 
-    const itemHTML = (it) => `
-    <label class="clean-item">
-        <input type="checkbox" data-id="${it.id}" ${it.level === 'safe' && it.id !== 'recycle_bin' ? 'checked' : ''}>
+    // View-only targets (WinSxS / Windows\Installer / WindowsApps) render as
+    // plain rows with no checkbox, so they can never be selected or cleaned.
+    // The backend refuses them independently -- see infoOnlyRuleIDs.
+    //
+    // Anything carrying a per-part breakdown (WindowsApps lists the biggest
+    // Store apps) gets a collapsible list, so the user can see what is actually
+    // installed instead of only the directory total.
+    const childrenHTML = (it) => {
+        const kids = it.children || [];
+        if (!kids.length) return '';
+        const count = it.childCount || kids.length;
+        return `
+            <details class="item-children">
+                <summary>查看装了哪些应用（共 ${count} 个）</summary>
+                <div class="child-list">
+                    ${kids.map(c => `
+                        <div class="child-row" title="${esc(c.id || c.name)}">
+                            <span class="child-name">${esc(c.name)}</span>
+                            <span class="child-size">${fmtBytes(c.size)}</span>
+                        </div>`).join('')}
+                </div>
+            </details>`;
+    };
+
+    const itemHTML = (it) => it.infoOnly ? `
+    <div class="clean-item clean-item-infoonly">
+        <span class="item-check-spacer"></span>
         <div class="item-info">
-            <div class="item-name">${esc(it.name)}${isPermanent(it) ? ' <span class="badge badge-danger">永久删除</span>' : ''}</div>
-            <div class="item-path">${it.requiresAdmin && !state.isAdmin ? '🔒 ' : ''}${esc(it.paths.join('；'))}</div>
+            <div class="item-name">${esc(it.name)} <span class="badge badge-infoonly">仅供查看</span></div>
+            <div class="item-path">${pathSummary(it.paths)}</div>
+            ${it.infoNote ? `<div class="item-note">${esc(it.infoNote)}</div>` : ''}
+            ${childrenHTML(it)}
+        </div>
+        <span class="item-size">${fmtBytes(it.size)}</span>
+    </div>` : `
+    <label class="clean-item">
+        <input type="checkbox" data-id="${it.id}" ${it.level === 'safe' && it.id !== 'recycle_bin' && !it.noAutoCheck ? 'checked' : ''}>
+        <div class="item-info">
+            <div class="item-name">${esc(it.name)}${isPermanent(it) ? ' <span class="badge badge-danger">永久删除</span>' : ''}${it.noAutoCheck ? ' <span class="badge badge-admin">需手动勾选</span>' : ''}</div>
+            <div class="item-path">${it.requiresAdmin && !state.isAdmin ? '🔒 ' : ''}${pathSummary(it.paths)}</div>
         </div>
         <span class="item-size">${fmtBytes(it.size)}</span>
         ${it.requiresAdmin && !state.isAdmin ? '<span class="badge badge-admin">需管理员</span>' : ''}
     </label>`;
 
+    // Totals only ever count cleanable items: adding WinSxS' ~12 GB (which is
+    // mostly hardlinks and cannot be freed by this tool anyway) would make the
+    // "can free" figure meaningless.
+    const cleanable = (its) => its.filter(it => !it.infoOnly);
+    const viewOnly = (its) => its.filter(it => it.infoOnly);
+
     const levelBlockHTML = (its) => byLevelKeys.map(level => {
-        const list = its.filter(it => it.level === level);
+        const list = cleanable(its).filter(it => it.level === level);
         if (!list.length) return '';
         const meta = LEVEL_META[level];
         return `
@@ -89,8 +138,21 @@ export async function refresh() {
         </div>`;
     }).join('');
 
+    const infoOnlyBlockHTML = (its) => {
+        const list = viewOnly(its);
+        if (!list.length) return '';
+        return `
+        <div class="infoonly-block">
+            <div class="infoonly-head">
+                <span>👁 仅供查看 · 本工具不会删除（需 DISM / 系统自带工具处理）</span>
+                <span class="infoonly-total">${fmtBytes(list.reduce((s, it) => s + it.size, 0))}</span>
+            </div>
+            ${list.map(itemHTML).join('')}
+        </div>`;
+    };
+
     const driveGroupHTML = (its, drive) => {
-        const total = its.reduce((s, it) => s + it.size, 0);
+        const total = cleanable(its).reduce((s, it) => s + it.size, 0);
         const isCollapsed = collapsed.has(drive);
         return `
         <div class="clean-group drive-group" data-drive="${drive}">
@@ -102,6 +164,7 @@ export async function refresh() {
             </div>
             <div class="drive-body ${isCollapsed ? 'collapsed' : ''}">
                 ${levelBlockHTML(its)}
+                ${infoOnlyBlockHTML(its)}
             </div>
         </div>`;
     };
@@ -113,9 +176,9 @@ export async function refresh() {
             <div class="drive-head">
                 <span class="drive-name">全部磁盘</span>
                 <span class="drive-count">${multi.length} 项</span>
-                <span class="group-total">${fmtBytes(multi.reduce((s, it) => s + it.size, 0))}</span>
+                <span class="group-total">${fmtBytes(cleanable(multi).reduce((s, it) => s + it.size, 0))}</span>
             </div>
-            <div class="drive-body">${levelBlockHTML(multi)}</div>
+            <div class="drive-body">${levelBlockHTML(multi)}${infoOnlyBlockHTML(multi)}</div>
         </div>` : ''}
         ${driveOrder.map(d => driveGroupHTML(byDrive.get(d), d)).join('')}
     `;
@@ -215,7 +278,7 @@ async function runClean(ids) {
                 log(`    · ${err.path}: ${err.error}（${err.kind}）`, 'err'));
         }
     });
-    log(`清理完成，共移入回收站 ${fmtBytes(freed)}`, 'ok');
+    log(`清理完成，共移入回收站 ${fmtBytes(freed)}（用时 ${((Date.now() - startedAt) / 1000).toFixed(1)}s）`, 'ok');
     toast(`已移入回收站 ${fmtBytes(freed)}，可在历史记录中恢复`, 'ok');
     btn.disabled = false;
 

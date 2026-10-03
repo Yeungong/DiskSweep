@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 )
@@ -45,7 +46,65 @@ func (a *App) recordHistory(item CleanItem, path string, size int64, ok bool, er
 		`INSERT INTO clean_history (time, item_id, item_name, path, size, ok, error) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		time.Now().Unix(), item.ID, item.Name, path, size, boolToInt(ok), errMsg,
 	)
-	// Prune: keep the newest 10000 rows and anything within 90 days.
+	a.pruneHistory()
+}
+
+// recordHistoryBatch records every path handled by one rule in a single
+// transaction and prunes once. One-row-per-statement mattered a lot in
+// practice: a rule such as "用户临时文件" can touch tens of thousands of files,
+// and each write also re-ran the whole-table prune query.
+func (a *App) recordHistoryBatch(item CleanItem, outs []PathOutcome) {
+	if len(outs) == 0 || a.cache == nil || a.cache.db == nil {
+		return
+	}
+	fallback := func() {
+		for _, o := range outs {
+			a.recordHistory(item, o.Path, o.Size, o.Err == "", o.Err)
+		}
+	}
+	tx, err := a.cache.db.Begin()
+	if err != nil {
+		fallback()
+		return
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO clean_history (time, item_id, item_name, path, size, ok, error) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		fallback()
+		return
+	}
+	now := time.Now().Unix()
+	for _, o := range outs {
+		_, _ = stmt.Exec(now, item.ID, item.Name, o.Path, o.Size, boolToInt(o.Err == ""), o.Err)
+	}
+	_ = stmt.Close()
+	if err := tx.Commit(); err != nil {
+		return
+	}
+	a.pruneHistory()
+}
+
+// lastHistoryPrune throttles pruning: the prune query scans the entire history
+// table, so running it after every insert is pure overhead inside a big batch.
+var lastHistoryPrune atomic.Int64
+
+// pruneHistory keeps the newest 10000 entries and anything within 90 days,
+// refreshing at most once every 10 seconds.
+func (a *App) pruneHistory() {
+	if a.cache == nil || a.cache.db == nil {
+		return
+	}
+	now := time.Now().Unix()
+	for {
+		last := lastHistoryPrune.Load()
+		if last != 0 && now-last < 10 {
+			return
+		}
+		if lastHistoryPrune.CompareAndSwap(last, now) {
+			break
+		}
+	}
 	cutoff := time.Now().AddDate(0, 0, -90).Unix()
 	_, _ = a.cache.db.Exec(
 		`DELETE FROM clean_history WHERE id NOT IN (SELECT id FROM clean_history ORDER BY id DESC LIMIT 10000) OR time < ?`,

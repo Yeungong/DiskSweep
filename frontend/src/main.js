@@ -250,12 +250,30 @@ function initScan() {
         trendCacheInvalidate();
     });
 
-    // Cleanup step progress (per item). Final "完成" sentinel is ignored here;
-    // clean.js's runClean owns the completion state (min hold time).
+    // Cleanup progress: one event per item start/finish plus a steady
+    // heartbeat while an item is working, so a rule that takes minutes (e.g.
+    // %TEMP% with 1 GB of files) shows live sub-progress and elapsed time
+    // instead of looking frozen. clean.js's runClean owns the completion
+    // state (min hold time), so nothing is hidden from here.
+    let lastLoggedItem = '';
     onCleanProgress((p) => {
-        if (!p.total || p.itemName === '完成') return;
-        const pct = Math.round(p.done / p.total * 100);
-        showProgress(pct, `清理中… 第 ${p.done}/${p.total} 项：${p.itemName}`);
+        if (!p.total || !p.itemName) return;
+        const idx = Math.min(p.done + 1, p.total);
+        const sub = p.subTotal > 0 ? p.subDone / p.subTotal : 0;
+        const pct = Math.round((p.done + (p.phase === 'done' ? 0 : sub)) / p.total * 100);
+        const secs = ((p.elapsedMs || 0) / 1000).toFixed(1);
+        const bits = [`清理中 第 ${idx}/${p.total} 项`, p.itemName];
+        if (p.detail) bits.push(p.detail);
+        if (p.freed > 0) bits.push(`已移入回收站 ${fmtBytes(p.freed)}`);
+        bits.push(`用时 ${secs}s`);
+        showProgress(pct, bits.join(' · '));
+
+        // Mirror each item's start into the log so the sequence is visible
+        // even when the bar is pinned on one very slow item.
+        if (p.phase === 'start' && p.itemName !== lastLoggedItem) {
+            lastLoggedItem = p.itemName;
+            clean.log(`→ 处理「${p.itemName}」…`);
+        }
     });
 }
 
